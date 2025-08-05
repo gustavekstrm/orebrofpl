@@ -1225,11 +1225,7 @@ function updatePlayerProfiles() {
     }));
 }
 
-// Logout function
-function logout() {
-    localStorage.removeItem('fplLoggedIn');
-    location.reload();
-}
+
 
 // Save data (admin function)
 function saveData() {
