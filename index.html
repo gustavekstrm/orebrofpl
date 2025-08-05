@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="sv">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FPL ÖREBRO 25/26 - Fantasy Premier League</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚽️</text></svg>"
+      type="image/svg+xml"
+    />
+    <link rel="stylesheet" href="styles.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+  <body>
+    <!-- Login Screen -->
+    <div id="loginScreen" class="login-screen">
+      <div class="login-container">
+        <div class="login-header">
+          <img src="images/narkelogo.png" alt="Närke" class="narke-logo" />
+          <h1>Fantasy Premier League</h1>
+          <p>Privat Liga</p>
+        </div>
+        <div class="login-form">
+          <div class="swish-instructions">
+            <div class="swish-card">
+              <h3>🎟️ Anmälningsavgift: 200 kr</h3>
+              <div class="swish-details">
+                <p><strong>Swisha till:</strong> 070-862 40 47</p>
+                <p><strong>Meddelande:</strong> "FPL 2025"</p>
+              </div>
+              <div class="screenshot-instructions">
+                <p><strong>Skicka sedan en screenshot till:</strong></p>
+                <p class="snapchat-handle">👻 gustavekstrm (Snapchat)</p>
+              </div>
+              <p class="password-note">
+                <strong>🔑</strong> Du får lösenordet efter att betalningen
+                bekräftats.
+              </p>
+            </div>
+          </div>
+          <input
+            type="password"
+            id="passwordInput"
+            placeholder="Ange lösenord"
+            autocomplete="off"
+          />
+          <button onclick="checkPassword()">Logga in</button>
+          <p class="login-info">Lycka till i år!</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Content -->
+    <div id="mainContent" class="main-content hidden">
+      <!-- Navigation Bar -->
+      <nav class="navbar">
+        <div class="nav-container">
+          <div class="nav-logo">
+            <img src="images/narkelogo.png" alt="Närke" class="nav-logo-img" />
+            <span class="nav-title">FPL ÖREBRO 25/26</span>
+            <img src="images/pltrophy.png" alt="PL Trophy" class="pl-icon" />
+          </div>
+          <div class="nav-menu">
+            <button class="nav-btn active" onclick="showSection('home')">
+              Startsida
+            </button>
+            <button class="nav-btn" onclick="showSection('tables')">
+              Tabeller
+            </button>
+            <button class="nav-btn" onclick="showSection('highlights')">
+              Veckans höjdpunkter
+            </button>
+            <button class="nav-btn" onclick="showSection('profiles')">
+              Deltagare
+            </button>
+            <button class="logout-btn" onclick="logout()">
+              <i class="fas fa-sign-out-alt"></i>
+              Logga ut
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      <!-- Home Section -->
+      <section id="home" class="section active">
+        <div class="container">
+          <div class="welcome-card">
+            <h1>Välkommen till Årets Fantasy Premier League-Liga!</h1>
+            <p class="subtitle">
+              En spännande säsong väntar - var med och tävla om prispotten!
+            </p>
+          </div>
+
+          <div class="league-code-card">
+            <h2>Liga-kod</h2>
+            <div class="code-display">
+              <span class="code-text" id="leagueCode">46mnf2</span>
+              <button
+                class="copy-btn"
+                onclick="copyLeagueCode()"
+                title="Kopiera till urklipp"
+              >
+                <i class="fas fa-copy"></i>
+              </button>
+            </div>
+            <p class="code-info">
+              Använd denna kod för att ansluta till ligan i Fantasy Premier
+              League-appen
+            </p>
+            <div id="copyFeedback" class="copy-feedback hidden">
+              <i class="fas fa-check"></i>
+              <span>Kopierat till urklipp!</span>
+            </div>
+          </div>
+
+          <div class="prize-pool">
+            <h2>Prispott</h2>
+
+            <div class="prize-grid">
+              <div class="prize-card">
+                <div class="prize-position">1:a</div>
+                <div class="prize-percentage">50%</div>
+                <div class="prize-label">Första plats</div>
+              </div>
+              <div class="prize-card">
+                <div class="prize-position">2:a</div>
+                <div class="prize-percentage">25%</div>
+                <div class="prize-label">Andra plats</div>
+              </div>
+              <div class="prize-card">
+                <div class="prize-position">3:e</div>
+                <div class="prize-percentage">15%</div>
+                <div class="prize-label">Tredje plats</div>
+              </div>
+              <div class="prize-card">
+                <div class="prize-position">Cup</div>
+                <div class="prize-percentage">10%</div>
+                <div class="prize-label">Cup-tävling</div>
+              </div>
+            </div>
+
+            <!-- Prize Chart Section -->
+            <div class="prize-chart-section">
+              <div
+                class="prize-total-input"
+                id="prizeTotalInput"
+                style="display: none"
+              >
+                <label for="prizeTotal">Totala prispotten (kr):</label>
+                <input
+                  type="number"
+                  id="prizeTotal"
+                  placeholder="4200"
+                  min="0"
+                  step="100"
+                />
+              </div>
+
+              <h3 class="prize-chart-title">Nuvarande prispott</h3>
+
+              <div class="prize-chart-container">
+                <canvas id="prizeChart" width="300" height="300"></canvas>
+              </div>
+
+              <div class="prize-breakdown" id="prizeBreakdown">
+                <!-- Prize breakdown will be populated by JavaScript -->
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tables Section -->
+      <section id="tables" class="section">
+        <div class="container">
+          <h1>Tabeller</h1>
+
+          <div class="table-tabs">
+            <button class="tab-btn active" onclick="showTable('season')">
+              <i class="fas fa-trophy"></i>
+              Totalpoäng
+            </button>
+            <button class="tab-btn" onclick="showTable('gameweek')">
+              <i class="fas fa-calendar-week"></i>
+              Senaste Gameweek
+            </button>
+          </div>
+
+          <div id="seasonTable" class="table-container active">
+            <div class="table-header">
+              <h2>Totala poäng (Säsong)</h2>
+              <div class="gameweek-label">Säsong 2024/25</div>
+            </div>
+            <div class="table-wrapper">
+              <table class="league-table">
+                <thead>
+                  <tr>
+                    <th>Pos</th>
+                    <th>Spelare</th>
+                    <th>Poäng</th>
+                    <th>GW</th>
+                  </tr>
+                </thead>
+                <tbody id="seasonTableBody">
+                  <!-- Data will be populated by JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div id="gameweekTable" class="table-container">
+            <div class="table-header">
+              <h2>Poäng senaste omgången</h2>
+              <div class="gameweek-label" id="currentGameweekLabel">
+                Gameweek 38
+              </div>
+            </div>
+            <div class="table-wrapper">
+              <table class="league-table">
+                <thead>
+                  <tr>
+                    <th>Pos</th>
+                    <th>Spelare</th>
+                    <th>Poäng</th>
+                    <th>GW</th>
+                  </tr>
+                </thead>
+                <tbody id="gameweekTableBody">
+                  <!-- Data will be populated by JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Highlights Section -->
+      <section id="highlights" class="section">
+        <div class="container">
+          <h1>Veckans höjdpunkter</h1>
+
+          <!-- Main Highlights Grid -->
+          <div class="highlights-grid">
+            <div class="highlight-card rocket">
+              <div class="highlight-icon">
+                <i class="fas fa-rocket"></i>
+              </div>
+              <h3>Veckans Raket</h3>
+              <p id="weeklyRocket">Melvin Yuksel - 89 poäng</p>
+              <small>Du är klass! En annan nivå!</small>
+            </div>
+
+            <div class="highlight-card flop">
+              <div class="highlight-icon">
+                <i class="fas fa-bomb"></i>
+              </div>
+              <h3>Veckans Sopa</h3>
+              <p id="weeklyFlop">Johan Pauly - 45 poäng</p>
+              <small>0 BALL KNOWLEDGE!! RADERA APPEN!!</small>
+            </div>
+
+            <div class="highlight-card captain">
+              <div class="highlight-icon">
+                <i class="fas fa-crown"></i>
+              </div>
+              <h3>Veckans Sämsta Kapten</h3>
+              <p id="weeklyCaptain">Erik Rotsenius - Harry Kane (2 poäng)</p>
+              <small>Hahahahah herregud!!</small>
+            </div>
+          </div>
+
+          <!-- Gamified Roast Messages -->
+          <div class="roast-section">
+            <h2>Veckans svagaste insatser... ❌</h2>
+            <div class="roast-grid" id="roastGrid">
+              <!-- Roast messages will be populated by JavaScript -->
+            </div>
+          </div>
+
+          <!-- Öl-förtjänstnivåer -->
+          <div class="beer-section">
+            <h2>Öl-förtjänstnivåer 🍺</h2>
+            <div class="beer-grid" id="beerGrid">
+              <!-- Beer levels will be populated by JavaScript -->
+            </div>
+          </div>
+
+          <!-- Wall of Fame/Shame -->
+          <div class="wall-section">
+            <h2>Wall of Fame/Shame 🏆</h2>
+            <div class="wall-grid">
+              <div class="wall-card fame">
+                <h3>Wall of Fame</h3>
+                <div id="fameStats">
+                  <!-- Fame stats will be populated by JavaScript -->
+                </div>
+              </div>
+              <div class="wall-card shame">
+                <h3>Wall of Shame</h3>
+                <div id="shameStats">
+                  <!-- Shame stats will be populated by JavaScript -->
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Deltagare Section -->
+      <section id="profiles" class="section">
+        <div class="container">
+          <h1>Deltagare</h1>
+
+          <div class="profiles-grid" id="profilesGrid">
+            <!-- Participant profiles will be populated by JavaScript -->
+          </div>
+        </div>
+      </section>
+
+      <!-- Admin Panel Modal -->
+      <div id="adminModal" class="admin-modal">
+        <div class="admin-modal-content">
+          <div class="admin-header">
+            <h2>Deltagare – Adminpanel</h2>
+            <button class="admin-close-btn" onclick="hideAdminPanel()">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+
+          <div class="admin-controls">
+            <button
+              class="admin-btn primary"
+              onclick="showAddParticipantForm()"
+            >
+              <i class="fas fa-plus"></i> Lägg till deltagare
+            </button>
+            <button
+              class="admin-btn secondary"
+              onclick="exportParticipantsData()"
+            >
+              <i class="fas fa-download"></i> Exportera JSON
+            </button>
+            <button class="admin-btn secondary" onclick="saveToLocalStorage()">
+              <i class="fas fa-save"></i> Spara till localStorage
+            </button>
+            <div class="admin-prize-control">
+              <label
+                >Prispott: <span id="currentPrizeTotal">4200</span> kr</label
+              >
+              <button
+                class="admin-btn secondary"
+                onclick="showPrizeTotalInput()"
+              >
+                <i class="fas fa-edit"></i> Ändra
+              </button>
+            </div>
+          </div>
+
+          <!-- Admin Prize Total Input -->
+          <div id="adminPrizeTotalInput" class="admin-prize-input hidden">
+            <h3>Ändra prispott</h3>
+            <div class="form-group">
+              <label for="adminPrizeTotal">Totala prispotten (kr):</label>
+              <input
+                type="number"
+                id="adminPrizeTotal"
+                placeholder="4200"
+                min="0"
+                step="100"
+              />
+            </div>
+            <div class="form-actions">
+              <button
+                type="button"
+                class="admin-btn primary"
+                onclick="updatePrizeTotal()"
+              >
+                Uppdatera
+              </button>
+              <button
+                type="button"
+                class="admin-btn secondary"
+                onclick="hideAdminPrizeInput()"
+              >
+                Avbryt
+              </button>
+            </div>
+          </div>
+
+          <div class="admin-participants-list" id="adminParticipantsList">
+            <!-- Participants will be populated here -->
+          </div>
+
+          <!-- Add Participant Form -->
+          <div id="addParticipantForm" class="admin-form hidden">
+            <h3>Lägg till ny deltagare</h3>
+            <form onsubmit="addNewParticipant(event)">
+              <div class="form-group">
+                <label for="newName">Namn:</label>
+                <input type="text" id="newName" required />
+              </div>
+              <div class="form-group">
+                <label for="newTeam">Favoritlag:</label>
+                <input type="text" id="newTeam" required />
+              </div>
+              <div class="form-group">
+                <label for="newFplId">FPL ID (valfritt):</label>
+                <input
+                  type="number"
+                  id="newFplId"
+                  placeholder="Lämna tomt om okänt"
+                />
+              </div>
+              <div class="form-group">
+                <label for="newRoast">Profilroast (valfritt):</label>
+                <textarea
+                  id="newRoast"
+                  placeholder="En rolig kommentar om deltagaren..."
+                ></textarea>
+              </div>
+              <div class="form-group">
+                <label for="newImage">Profilbild URL (valfritt):</label>
+                <input type="url" id="newImage" placeholder="https://..." />
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="admin-btn primary">
+                  Lägg till
+                </button>
+                <button
+                  type="button"
+                  class="admin-btn secondary"
+                  onclick="hideAddParticipantForm()"
+                >
+                  Avbryt
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="script.js"></script>
+    <script>
+      // Simple check to see if script.js loaded properly
+      console.log("HTML loaded, checking script.js...");
+
+      // Add a simple admin function that works regardless of script.js loading
+      window.adminLogin = function () {
+        console.log("Admin login requested");
+        const password = prompt("Ange adminlösenord:");
+        if (password === "Pepsie10") {
+          console.log("Admin login successful");
+          // Try to show admin panel
+          const adminModal = document.getElementById("adminModal");
+          if (adminModal) {
+            adminModal.classList.add("show");
+            console.log("Admin panel should now be visible");
+
+            // Try to populate admin list if the function exists
+            if (typeof window.populateAdminParticipantsList === "function") {
+              window.populateAdminParticipantsList();
+            }
+          } else {
+            console.error("Admin modal not found");
+            alert("Admin panel not found. Please refresh the page.");
+          }
+        } else if (password !== null) {
+          console.log("Admin login failed");
+          alert("Felaktigt lösenord!");
+        }
+      };
+
+      // Add keyboard shortcut for admin access (Shift + A)
+      document.addEventListener("keydown", function (e) {
+        console.log("Key pressed:", e.key, "Shift:", e.shiftKey);
+        if (e.shiftKey && e.key === "A") {
+          console.log("Admin shortcut detected!");
+          e.preventDefault();
+          window.adminLogin();
+        }
+      });
+
+      // Check if script.js loaded properly
+      setTimeout(function () {
+        console.log("Checking script.js functions...");
+        console.log(
+          "showAdminPasswordPrompt available:",
+          typeof window.showAdminPasswordPrompt
+        );
+        console.log(
+          "populateAdminParticipantsList available:",
+          typeof window.populateAdminParticipantsList
+        );
+
+        if (typeof window.showAdminPasswordPrompt === "function") {
+          console.log("Script.js loaded successfully!");
+          // Replace the simple admin function with the full one
+          window.adminLogin = window.showAdminPasswordPrompt;
+        } else {
+          console.warn(
+            "Script.js functions not available, using fallback admin function"
+          );
+        }
+      }, 2000);
+    </script>
+  </body>
+</html>
