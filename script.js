@@ -2,7 +2,12 @@
 console.log('=== SCRIPT.JS LOADING ===');
 const CORRECT_PASSWORD = 'fantasyorebro';
 const ADMIN_PASSWORD = 'Pepsie10';
+// FPL API Configuration - Using Render Proxy
 const FPL_API_BASE = 'https://fantasy.premierleague.com/api';
+const FPL_PROXY_BASE = 'https://orebrofpl.onrender.com/api'; // Render proxy URL
+
+// Always use proxy to avoid CORS issues
+const USE_PROXY = true;
 const LEAGUE_CODE = '46mnf2';
 
 // Global flag to disable API calls for local development
@@ -1289,10 +1294,11 @@ document.addEventListener('DOMContentLoaded', function() {
 // FPL API Integration Functions
 async function fetchBootstrapData() {
     try {
-        console.log('🔄 Fetching bootstrap data from FPL API...');
-        console.log('📡 API URL:', `${FPL_API_BASE}/bootstrap-static/`);
+        const apiUrl = `${FPL_PROXY_BASE}/bootstrap-static/`;
+        console.log('🔄 Fetching bootstrap data from FPL API via Render proxy...');
+        console.log('📡 API URL:', apiUrl);
         
-        const response = await fetch(`${FPL_API_BASE}/bootstrap-static/`);
+        const response = await fetch(apiUrl);
         console.log('📡 Response status:', response.status);
         console.log('📡 Response ok:', response.ok);
         
@@ -1336,7 +1342,7 @@ async function fetchPlayerData(fplId) {
         console.log(`🔄 Fetching player data for FPL ID: ${fplId}`);
         
         // Fetch current season data
-        const currentUrl = `${FPL_API_BASE}/entry/${fplId}/`;
+        const currentUrl = `${FPL_PROXY_BASE}/entry/${fplId}/`;
         console.log(`📡 Current season URL: ${currentUrl}`);
         
         const currentResponse = await fetch(currentUrl);
@@ -1349,7 +1355,7 @@ async function fetchPlayerData(fplId) {
         console.log(`✅ Current season data for FPL ID ${fplId}:`, currentData);
         
         // Fetch historical data
-        const historyUrl = `${FPL_API_BASE}/entry/${fplId}/history/`;
+        const historyUrl = `${FPL_PROXY_BASE}/entry/${fplId}/history/`;
         console.log(`📡 History URL: ${historyUrl}`);
         
         const historyResponse = await fetch(historyUrl);
@@ -1375,8 +1381,11 @@ async function fetchPlayerData(fplId) {
 
 async function fetchGameweekPicks(fplId, gameweek) {
     try {
+        const apiUrl = `${FPL_PROXY_BASE}/entry/${fplId}/event/${gameweek}/picks/`;
         console.log(`🔄 Fetching GW${gameweek} picks for FPL ID: ${fplId}`);
-        const response = await fetch(`${FPL_API_BASE}/entry/${fplId}/event/${gameweek}/picks/`);
+        console.log(`📡 API URL: ${apiUrl}`);
+        
+        const response = await fetch(apiUrl);
         
         if (!response.ok) {
             if (response.status === 404) {
@@ -1404,8 +1413,8 @@ async function fetchGameweekPicks(fplId, gameweek) {
 
 async function fetchLeagueData() {
     try {
-        console.log('Fetching league data from FPL API...');
-        const response = await fetch(`${FPL_API_BASE}/leagues-classic/${LEAGUE_CODE}/standings/`);
+        console.log('Fetching league data from FPL API via Render proxy...');
+        const response = await fetch(`${FPL_PROXY_BASE}/leagues-classic/${LEAGUE_CODE}/standings/`);
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -1607,7 +1616,7 @@ async function initializeFPLData() {
         console.log('👥 Final participantsData:', participantsData);
         
         // Update data source indicator
-        updateDataSourceIndicator('🌐 Live FPL Data', '#10b981', '#fff');
+        updateDataSourceIndicator('🌐 Live FPL Data (via Render)', '#10b981', '#fff');
         
         // Populate UI with real data
         setTimeout(() => {
@@ -1626,15 +1635,15 @@ async function initializeFPLData() {
             type: error.name
         });
         
-        // Check if it's a CORS error
+        // Check if it's a proxy error
         if (error.message.includes('CORS') || error.message.includes('Access-Control-Allow-Origin')) {
-            console.log('⚠️ CORS error detected - this is expected on public hosting');
-            updateDataSourceIndicator('⚠️ CORS Blocked', '#f59e0b', '#000');
-            showAPIErrorNotification('CORS policy blocks API calls from public hosting. This is normal for public websites. Using fallback data.');
-        } else if (error.message.includes('Network error')) {
-            console.log('⚠️ Network error detected - FPL API may be temporarily unavailable');
-            updateDataSourceIndicator('⚠️ Network Error', '#f59e0b', '#000');
-            showAPIErrorNotification('Network error - FPL API may be temporarily unavailable. Using fallback data.');
+            console.log('⚠️ CORS error detected - proxy may not be working');
+            updateDataSourceIndicator('⚠️ Proxy Error', '#f59e0b', '#000');
+            showAPIErrorNotification('CORS error detected. The Render proxy may not be working correctly. Using fallback data.');
+        } else if (error.message.includes('Network error') || error.message.includes('Failed to fetch')) {
+            console.log('⚠️ Network error detected - Render proxy may be unavailable');
+            updateDataSourceIndicator('⚠️ Proxy Unavailable', '#f59e0b', '#000');
+            showAPIErrorNotification('Network error - Render proxy may be temporarily unavailable. Using fallback data.');
         } else {
             updateDataSourceIndicator('❌ API Error', '#ef4444', '#fff');
             showAPIErrorNotification(`API Error: ${error.message}. Using fallback data.`);
@@ -1977,8 +1986,8 @@ async function testAPIConnection() {
     }
     
     try {
-        console.log('🧪 Testing bootstrap API...');
-        const bootstrapTest = await fetch(`${FPL_API_BASE}/bootstrap-static/`);
+        console.log('🧪 Testing bootstrap API via Render proxy...');
+        const bootstrapTest = await fetch(`${FPL_PROXY_BASE}/bootstrap-static/`);
         console.log('🧪 Bootstrap response status:', bootstrapTest.status);
         
         if (bootstrapTest.ok) {
@@ -1992,7 +2001,7 @@ async function testAPIConnection() {
         }
         
         console.log('🧪 Testing player API for ID 1490173 (Melvin Yuksel)...');
-        const playerTest = await fetch(`${FPL_API_BASE}/entry/1490173/`);
+        const playerTest = await fetch(`${FPL_PROXY_BASE}/entry/1490173/`);
         console.log('🧪 Player response status:', playerTest.status);
         
         if (playerTest.ok) {
@@ -2007,7 +2016,7 @@ async function testAPIConnection() {
         }
         
         console.log('🧪 Testing current gameweek picks...');
-        const picksTest = await fetch(`${FPL_API_BASE}/entry/1490173/event/${currentGameweek}/picks/`);
+        const picksTest = await fetch(`${FPL_PROXY_BASE}/entry/1490173/event/${currentGameweek}/picks/`);
         console.log('🧪 Picks response status:', picksTest.status);
         
         if (picksTest.ok) {
@@ -2020,7 +2029,7 @@ async function testAPIConnection() {
             console.log('⚠️ Picks API returned status:', picksTest.status, '- this may be normal for new season');
         }
         
-        alert('✅ API test successful!\n\nFPL API is working correctly.\nCheck console for detailed results.');
+        alert('✅ API test successful!\n\nFPL API is working correctly via Render proxy.\nCheck console for detailed results.');
         
     } catch (error) {
         console.error('🧪 API test failed:', error);
