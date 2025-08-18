@@ -1268,6 +1268,9 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('FPL_API_BASE:', FPL_API_BASE);
     console.log('LEAGUE_CODE:', LEAGUE_CODE);
     
+    // Add data source indicator immediately
+    addDataSourceIndicator();
+    
     checkLoginStatus();
     setupEventListeners();
     loadFromLocalStorage(); // Load saved participant data
@@ -1584,10 +1587,16 @@ async function initializeFPLData() {
         
     } catch (error) {
         console.error('❌ CRITICAL ERROR: FPL API is unreachable:', error);
-        updateDataSourceIndicator('❌ API Unreachable', '#ef4444', '#fff');
+        console.error('❌ Error details:', {
+            message: error.message,
+            stack: error.stack,
+            type: error.name
+        });
         
-        // Show admin notification
-        showAPIErrorNotification();
+        updateDataSourceIndicator('❌ API Error', '#ef4444', '#fff');
+        
+        // Show admin notification with specific error
+        showAPIErrorNotification(error.message);
         
         // Only use fallback if API is completely unreachable
         console.log('🔄 Using fallback data due to API failure...');
@@ -1849,9 +1858,6 @@ function showMainContent() {
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('mainContent').classList.remove('hidden');
     
-    // Add data source indicator
-    addDataSourceIndicator();
-    
     // Initialize FPL data when user logs in
     console.log('Initializing FPL data after login...');
     initializeFPLData();
@@ -1859,9 +1865,8 @@ function showMainContent() {
 
 // Add data source indicator to the page
 function addDataSourceIndicator() {
-    const mainContent = document.getElementById('mainContent');
+    // Remove existing indicator if it exists
     const existingIndicator = document.getElementById('dataSourceIndicator');
-    
     if (existingIndicator) {
         existingIndicator.remove();
     }
@@ -1882,24 +1887,24 @@ function addDataSourceIndicator() {
         border: 1px solid #334155;
         box-shadow: 0 2px 4px rgba(0,0,0,0.3);
         cursor: pointer;
+        transition: all 0.3s ease;
     `;
     indicator.textContent = '🔄 Loading...';
     indicator.onclick = testAPIConnection;
     
-    mainContent.appendChild(indicator);
+    // Add to body so it's always visible
+    document.body.appendChild(indicator);
     
-    // Update indicator based on data source
-    setTimeout(() => {
-        if (DISABLE_API_CALLS) {
-            indicator.textContent = '📊 Mock Data';
-            indicator.style.background = '#f59e0b';
-            indicator.style.color = '#000';
-        } else {
-            indicator.textContent = '🌐 Live FPL Data';
-            indicator.style.background = '#10b981';
-            indicator.style.color = '#fff';
-        }
-    }, 2000);
+    // Update indicator based on data source immediately
+    if (DISABLE_API_CALLS) {
+        indicator.textContent = '📊 Mock Data (Local Dev)';
+        indicator.style.background = '#f59e0b';
+        indicator.style.color = '#000';
+    } else {
+        indicator.textContent = '🌐 Live FPL Data';
+        indicator.style.background = '#10b981';
+        indicator.style.color = '#fff';
+    }
 }
 
 // Test API connection manually
@@ -1966,7 +1971,7 @@ function updateDataSourceIndicator(text, bgColor, textColor) {
 }
 
 // Show API error notification to admin
-function showAPIErrorNotification() {
+function showAPIErrorNotification(errorMessage = 'Unknown error') {
     const notification = document.createElement('div');
     notification.id = 'apiErrorNotification';
     notification.style.cssText = `
@@ -1988,6 +1993,7 @@ function showAPIErrorNotification() {
         <div style="margin-bottom: 0.5rem;">⚠️ FPL API Error</div>
         <div style="font-size: 0.9rem; font-weight: normal;">
             Unable to fetch real-time data from FPL API.<br>
+            Error: ${errorMessage}<br>
             Using fallback data. Check console for details.
         </div>
         <button onclick="this.parentElement.remove()" style="
