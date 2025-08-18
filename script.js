@@ -6,7 +6,7 @@ const FPL_API_BASE = 'https://fantasy.premierleague.com/api';
 const LEAGUE_CODE = '46mnf2';
 
 // Global flag to disable API calls for local development
-const DISABLE_API_CALLS = false; // Set to false when deployed to a proper server
+const DISABLE_API_CALLS = false; // API enabled for deployment // Set to true for local development due to CORS, false when deployed
 
 // Global data storage
 let isLoggedIn = false;
@@ -63,8 +63,8 @@ const participantsData = [
     {
         namn: 'Melvin Yuksel',
         totalPoäng: 2456,
-        favoritlag: 'Manchester United',
-        fplId: 123456, // Sample FPL ID for testing
+        favoritlag: 'Sunderland',
+        fplId: 1490173, // Real FPL ID
         profilRoast: 'Har haft fler minuspoäng än rena lakan den här säsongen.',
         image: generateAvatarDataURL('M'),
         lastSeasonRank: 12,
@@ -74,17 +74,17 @@ const participantsData = [
         namn: 'Jakob Gårlin',
         totalPoäng: 2412,
         favoritlag: 'Liverpool',
-        fplId: 234567, // Sample FPL ID for testing
+        fplId: 1450793, // Real FPL ID
         profilRoast: 'Enda som är sämre än din kaptensval är din senaste bortamatch.',
         image: generateAvatarDataURL('J'),
         lastSeasonRank: 8,
         bestGameweek: 87
     },
     {
-        namn: 'Joel Segerlind',
+        namn: 'Joel A-Segerlind',
         totalPoäng: 2389,
         favoritlag: 'Arsenal',
-        fplId: null,
+        fplId: 133147, // Real FPL ID
         profilRoast: 'Din transferstrategi liknar en blindfolded dart game.',
         image: generateAvatarDataURL('J'),
         lastSeasonRank: 15,
@@ -94,7 +94,7 @@ const participantsData = [
         namn: 'Viggo Svedin',
         totalPoäng: 2356,
         favoritlag: 'Chelsea',
-        fplId: null,
+        fplId: 8759848, // Real FPL ID
         profilRoast: 'Bench boost på GW1? Bara du som kan komma på det.',
         image: generateAvatarDataURL('V'),
         lastSeasonRank: 22,
@@ -104,7 +104,7 @@ const participantsData = [
         namn: 'Julius Höglund',
         totalPoäng: 2321,
         favoritlag: 'Manchester City',
-        fplId: null,
+        fplId: 2703061, // Real FPL ID
         profilRoast: 'Flest flaskor bubbel - förutom när det gäller kaptensval.',
         image: generateAvatarDataURL('J'),
         lastSeasonRank: 5,
@@ -114,7 +114,7 @@ const participantsData = [
         namn: 'Erik Rotsenius',
         totalPoäng: 2289,
         favoritlag: 'Tottenham',
-        fplId: null,
+        fplId: 2269283, // Real FPL ID
         profilRoast: 'Kaptenkaos är ditt mellannamn.',
         image: generateAvatarDataURL('E'),
         lastSeasonRank: 18,
@@ -124,7 +124,7 @@ const participantsData = [
         namn: 'William Kuyumcu',
         totalPoäng: 2256,
         favoritlag: 'Newcastle',
-        fplId: null,
+        fplId: 5527279, // Real FPL ID
         profilRoast: 'Bench Boost Fuskare deluxe edition.',
         image: generateAvatarDataURL('W'),
         lastSeasonRank: 25,
@@ -134,7 +134,7 @@ const participantsData = [
         namn: 'Axel Ekström',
         totalPoäng: 2223,
         favoritlag: 'Aston Villa',
-        fplId: null,
+        fplId: 4096096, // Real FPL ID
         profilRoast: 'Trigger Happy - mer transfers än poäng.',
         image: generateAvatarDataURL('A'),
         lastSeasonRank: 30,
@@ -143,18 +143,38 @@ const participantsData = [
     {
         namn: 'Gustav Ekström',
         totalPoäng: 2189,
-        favoritlag: 'Brighton',
-        fplId: null,
+        favoritlag: 'Arsenal',
+        fplId: 348966, // Real FPL ID
         profilRoast: 'Bench God - men bara när du inte använder Bench Boost.',
         image: generateAvatarDataURL('G'),
         lastSeasonRank: 28,
         bestGameweek: 75
     },
     {
+        namn: 'David Jansson',
+        totalPoäng: 2100,
+        favoritlag: 'Ipswich',
+        fplId: 2884065, // Real FPL ID
+        profilRoast: 'Nykomling i ligan - hoppas du klarar dig!',
+        image: generateAvatarDataURL('D'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Alex Pettersson',
+        totalPoäng: 2050,
+        favoritlag: 'Tottenham',
+        fplId: 412417, // Real FPL ID
+        profilRoast: 'Spurs supporter - förklarar allt!',
+        image: generateAvatarDataURL('A'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
         namn: 'Sigge Carlsson',
         totalPoäng: 2156,
         favoritlag: 'West Ham',
-        fplId: null,
+        fplId: 5990179, // Real FPL ID
         profilRoast: 'Mest minuspoäng i ligan - grattis!',
         image: generateAvatarDataURL('S'),
         lastSeasonRank: 32,
@@ -164,11 +184,391 @@ const participantsData = [
         namn: 'Johan Pauly',
         totalPoäng: 2123,
         favoritlag: 'Crystal Palace',
-        fplId: null,
+        fplId: 4382408, // Real FPL ID
         profilRoast: 'Veckans Sopa - en titel du verkligen förtjänar.',
         image: generateAvatarDataURL('J'),
         lastSeasonRank: 35,
         bestGameweek: 68
+    },
+    {
+        namn: 'Filip Nieminen',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 3666480, // Real FPL ID
+        profilRoast: 'Ny deltagare - välkommen till kaoset!',
+        image: generateAvatarDataURL('F'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Edvin Möller',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 78175, // Real FPL ID
+        profilRoast: 'Ny deltagare - hoppas du överlever!',
+        image: generateAvatarDataURL('E'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Johan Ivarsson',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 1537567, // Real FPL ID
+        profilRoast: 'Ny deltagare - lycka till!',
+        image: generateAvatarDataURL('J'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Jacob Åhlander',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 6316536, // Real FPL ID
+        profilRoast: 'Ny deltagare - välkommen!',
+        image: generateAvatarDataURL('J'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Victor Celik',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 1884529, // Real FPL ID
+        profilRoast: 'Ny deltagare - kör hårt!',
+        image: generateAvatarDataURL('V'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Felix Möller',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 4413902, // Real FPL ID
+        profilRoast: 'Ny deltagare - spela smart!',
+        image: generateAvatarDataURL('F'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Markus Rosdahl',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 4971106, // Real FPL ID
+        profilRoast: 'Ny deltagare - gör ditt bästa!',
+        image: generateAvatarDataURL('M'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Tobias Pettersson',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 5735314, // Real FPL ID
+        profilRoast: 'Ny deltagare - lycka till!',
+        image: generateAvatarDataURL('T'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Robin Damström',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 908791, // Real FPL ID
+        profilRoast: 'Ny deltagare - kör på!',
+        image: generateAvatarDataURL('R'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'David Alfredsson',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 547800, // Real FPL ID
+        profilRoast: 'Ny deltagare - spela klokt!',
+        image: generateAvatarDataURL('D'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Karl Weckström',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 4294348, // Real FPL ID
+        profilRoast: 'Ny deltagare - gör det bra!',
+        image: generateAvatarDataURL('K'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Oliver S',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 8456844, // Real FPL ID
+        profilRoast: 'Ny deltagare - välkommen!',
+        image: generateAvatarDataURL('O'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Nisse Karlsson',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 3017284, // Real FPL ID
+        profilRoast: 'Ny deltagare - lycka till!',
+        image: generateAvatarDataURL('N'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Enis Krivdic',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 6176435, // Real FPL ID
+        profilRoast: 'Ny deltagare - kör hårt!',
+        image: generateAvatarDataURL('E'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Sebbe Sundkvist',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 35100, // Real FPL ID
+        profilRoast: 'Ny deltagare - spela smart!',
+        image: generateAvatarDataURL('S'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Leo Vasikisson',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 1435536, // Real FPL ID
+        profilRoast: 'Ny deltagare - gör ditt bästa!',
+        image: generateAvatarDataURL('L'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Gustaf Jorman Bergholm',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 6069375, // Real FPL ID
+        profilRoast: 'Ny deltagare - lycka till!',
+        image: generateAvatarDataURL('G'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Alex Bowern',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 542217, // Real FPL ID
+        profilRoast: 'Ny deltagare - välkommen!',
+        image: generateAvatarDataURL('A'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'David Ivarsson',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 2563309, // Real FPL ID
+        profilRoast: 'Ny deltagare - lycka till!',
+        image: generateAvatarDataURL('D'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Elton Vallberg',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 8779490, // Real FPL ID
+        profilRoast: 'Ny deltagare - kör hårt!',
+        image: generateAvatarDataURL('E'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Noah Freij',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 141529, // Real FPL ID
+        profilRoast: 'Ny deltagare - spela smart!',
+        image: generateAvatarDataURL('N'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'WIlgot Rydborg',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 5378419, // Real FPL ID
+        profilRoast: 'Ny deltagare - gör ditt bästa!',
+        image: generateAvatarDataURL('W'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Edvin Mårtensson',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 1146757, // Real FPL ID
+        profilRoast: 'Ny deltagare - lycka till!',
+        image: generateAvatarDataURL('E'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Hugo Sundquist',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 990189, // Real FPL ID
+        profilRoast: 'Ny deltagare - kör på!',
+        image: generateAvatarDataURL('H'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Kevin Schultze',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 2009407, // Real FPL ID
+        profilRoast: 'Ny deltagare - spela klokt!',
+        image: generateAvatarDataURL('K'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Adrian Torabi',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 2162629, // Real FPL ID
+        profilRoast: 'Ny deltagare - gör det bra!',
+        image: generateAvatarDataURL('A'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Elias Sundh',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 1289520, // Real FPL ID
+        profilRoast: 'Ny deltagare - välkommen!',
+        image: generateAvatarDataURL('E'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Dimitris Bakalokos',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 5746665, // Real FPL ID
+        profilRoast: 'Ny deltagare - lycka till!',
+        image: generateAvatarDataURL('D'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Hugo Nilsson',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 7634954, // Real FPL ID
+        profilRoast: 'Ny deltagare - kör hårt!',
+        image: generateAvatarDataURL('H'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Emil Vide',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 6001484, // Real FPL ID
+        profilRoast: 'Ny deltagare - spela smart!',
+        image: generateAvatarDataURL('E'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Max Rotschild Lundin',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 1084577, // Real FPL ID
+        profilRoast: 'Ny deltagare - gör ditt bästa!',
+        image: generateAvatarDataURL('M'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Melker Johansson',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 190340, // Real FPL ID
+        profilRoast: 'Ny deltagare - lycka till!',
+        image: generateAvatarDataURL('M'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'macsnizz Victor',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 1989237, // Real FPL ID
+        profilRoast: 'Ny deltagare - kör på!',
+        image: generateAvatarDataURL('M'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Teodor Tjernberg',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 9180666, // Real FPL ID
+        profilRoast: 'Ny deltagare - spela klokt!',
+        image: generateAvatarDataURL('T'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Simon Edberger Persson',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 759543, // Real FPL ID
+        profilRoast: 'Ny deltagare - gör det bra!',
+        image: generateAvatarDataURL('S'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Juan Pedersson',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 3030499, // Real FPL ID
+        profilRoast: 'Ny deltagare - välkommen!',
+        image: generateAvatarDataURL('J'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Wilmer Bremvik',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 3652477, // Real FPL ID
+        profilRoast: 'Ny deltagare - lycka till!',
+        image: generateAvatarDataURL('W'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+    },
+    {
+        namn: 'Malte L',
+        totalPoäng: 2000,
+        favoritlag: '',
+        fplId: 9340368, // Real FPL ID
+        profilRoast: 'Ny deltagare - kör hårt!',
+        image: generateAvatarDataURL('M'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
     }
 ];
 
@@ -864,6 +1264,9 @@ function updatePrizeTotal() {
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
     console.log('=== DOM CONTENT LOADED ===');
+    console.log('DISABLE_API_CALLS:', DISABLE_API_CALLS);
+    console.log('FPL_API_BASE:', FPL_API_BASE);
+    console.log('LEAGUE_CODE:', LEAGUE_CODE);
     
     checkLoginStatus();
     setupEventListeners();
@@ -883,43 +1286,75 @@ document.addEventListener('DOMContentLoaded', function() {
 // FPL API Integration Functions
 async function fetchBootstrapData() {
     try {
-        console.log('Fetching bootstrap data from FPL API...');
+        console.log('🔄 Fetching bootstrap data from FPL API...');
+        console.log('📡 API URL:', `${FPL_API_BASE}/bootstrap-static/`);
+        
         const response = await fetch(`${FPL_API_BASE}/bootstrap-static/`);
+        console.log('📡 Response status:', response.status);
+        console.log('📡 Response ok:', response.ok);
+        
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
+        
         const data = await response.json();
+        console.log('✅ Bootstrap data fetched successfully!');
+        console.log('📊 Data structure:', {
+            events: data.events?.length || 0,
+            teams: data.teams?.length || 0,
+            elements: data.elements?.length || 0
+        });
+        
         bootstrapData = data;
-        console.log('Bootstrap data fetched successfully:', data);
         return data;
     } catch (error) {
-        console.error('Error fetching bootstrap data:', error);
+        console.error('❌ Error fetching bootstrap data:', error);
+        console.error('❌ Error details:', {
+            message: error.message,
+            stack: error.stack
+        });
         return null;
     }
 }
 
 async function fetchPlayerData(fplId) {
     try {
-        console.log(`Fetching player data for FPL ID: ${fplId}`);
+        console.log(`🔄 Fetching player data for FPL ID: ${fplId}`);
         
         // Fetch current season data
-        const currentResponse = await fetch(`${FPL_API_BASE}/entry/${fplId}/`);
+        const currentUrl = `${FPL_API_BASE}/entry/${fplId}/`;
+        console.log(`📡 Current season URL: ${currentUrl}`);
+        
+        const currentResponse = await fetch(currentUrl);
+        console.log(`📡 Current response status: ${currentResponse.status}`);
+        
         if (!currentResponse.ok) {
-            throw new Error(`HTTP error! status: ${currentResponse.status}`);
+            throw new Error(`Current season HTTP error! status: ${currentResponse.status}`);
         }
         const currentData = await currentResponse.json();
+        console.log(`✅ Current season data for FPL ID ${fplId}:`, currentData);
         
         // Fetch historical data
-        const historyResponse = await fetch(`${FPL_API_BASE}/entry/${fplId}/history/`);
+        const historyUrl = `${FPL_API_BASE}/entry/${fplId}/history/`;
+        console.log(`📡 History URL: ${historyUrl}`);
+        
+        const historyResponse = await fetch(historyUrl);
+        console.log(`📡 History response status: ${historyResponse.status}`);
+        
         if (!historyResponse.ok) {
-            throw new Error(`HTTP error! status: ${historyResponse.status}`);
+            throw new Error(`History HTTP error! status: ${historyResponse.status}`);
         }
         const historyData = await historyResponse.json();
+        console.log(`✅ History data for FPL ID ${fplId}:`, historyData);
         
-        console.log(`Player data fetched for FPL ID ${fplId}:`, { currentData, historyData });
+        console.log(`✅ Player data fetched successfully for FPL ID ${fplId}`);
         return { currentData, historyData };
     } catch (error) {
-        console.error(`Error fetching player data for FPL ID ${fplId}:`, error);
+        console.error(`❌ Error fetching player data for FPL ID ${fplId}:`, error);
+        console.error(`❌ Error details:`, {
+            message: error.message,
+            stack: error.stack
+        });
         return null;
     }
 }
@@ -956,60 +1391,68 @@ async function fetchLeagueData() {
     }
 }
 
-// Function to update participantsData with real FPL data
+// Function to update participantsData with real FPL data - API-Only Mode
 async function updateParticipantsWithFPLData() {
-    console.log('=== UPDATING PARTICIPANTS WITH FPL DATA ===');
+    console.log('=== UPDATING PARTICIPANTS WITH FPL DATA (API-ONLY) ===');
+    console.log('Initial participantsData:', participantsData);
     
-    // First, fetch bootstrap data to get current gameweek
-    const bootstrapData = await fetchBootstrapData();
-    if (bootstrapData) {
-        currentGameweek = bootstrapData.events.find(event => event.finished === false)?.id || 38;
-        console.log('Current gameweek determined:', currentGameweek);
+    // Count participants with FPL IDs
+    const participantsWithFPL = participantsData.filter(p => p.fplId && p.fplId !== null);
+    console.log(`📊 Found ${participantsWithFPL.length} participants with FPL IDs`);
+    
+    if (participantsWithFPL.length === 0) {
+        throw new Error('No participants with FPL IDs found. Cannot proceed with API-only mode.');
     }
     
-    // Update each participant that has an FPL ID
+    // Update each participant with real FPL data
     for (let i = 0; i < participantsData.length; i++) {
         const participant = participantsData[i];
         
         if (participant.fplId && participant.fplId !== null) {
-            console.log(`Updating participant ${participant.namn} with FPL ID ${participant.fplId}`);
+            console.log(`🔄 Updating participant ${participant.namn} with FPL ID ${participant.fplId}`);
             
             const playerData = await fetchPlayerData(participant.fplId);
             if (playerData) {
                 const { currentData, historyData } = playerData;
+                console.log(`✅ FPL data received for ${participant.namn}`);
                 
-                // Update with real data
+                // Update with real data while preserving custom fields
                 participantsData[i] = {
-                    ...participant, // Keep existing data (roasts, image, etc.)
+                    ...participant, // Keep existing custom data (roasts, image, favoritlag, etc.)
                     namn: currentData.player_first_name + ' ' + currentData.player_last_name,
                     totalPoäng: currentData.summary_overall_points,
-                    lastSeasonRank: historyData.past?.find(past => past.season_name === '2023/24')?.rank || participant.lastSeasonRank,
+                    lastSeasonRank: historyData.past?.find(past => past.season_name === '2023/24')?.rank || 'N/A',
                     bestGameweek: Math.max(...historyData.current.map(gw => gw.points), 0)
                 };
                 
-                console.log(`Updated ${participant.namn} with real data:`, participantsData[i]);
+                console.log(`✅ Updated ${participant.namn} with real data:`, participantsData[i]);
+            } else {
+                console.log(`❌ Failed to fetch FPL data for ${participant.namn} (ID: ${participant.fplId})`);
+                // In API-only mode, we should throw an error if we can't fetch data
+                throw new Error(`Failed to fetch FPL data for ${participant.namn} (ID: ${participant.fplId})`);
             }
         } else {
-            console.log(`Participant ${participant.namn} has no FPL ID, keeping mock data`);
+            console.log(`❌ Participant ${participant.namn} has no FPL ID - this should not happen in API-only mode`);
+            throw new Error(`Participant ${participant.namn} has no FPL ID. All participants must have valid FPL IDs in API-only mode.`);
         }
     }
     
     // Save updated data to localStorage
     localStorage.setItem('fplParticipantsData', JSON.stringify(participantsData));
-    console.log('Participants data updated and saved to localStorage');
+    console.log('💾 Participants data updated and saved to localStorage');
+    console.log('📊 Final participantsData:', participantsData);
 }
 
-// Function to calculate weekly highlights from real FPL data
+// Function to calculate weekly highlights from real FPL data - API-Only Mode
 async function calculateWeeklyHighlightsFromAPI() {
-    console.log('=== CALCULATING WEEKLY HIGHLIGHTS FROM API ===');
+    console.log('=== CALCULATING WEEKLY HIGHLIGHTS FROM API (API-ONLY) ===');
     
     if (!bootstrapData || !bootstrapData.events) {
-        console.log('No bootstrap data available, using fallback highlights');
-        return;
+        throw new Error('No bootstrap data available. Cannot calculate highlights in API-only mode.');
     }
     
     const currentGW = currentGameweek;
-    console.log(`Calculating highlights for GW${currentGW}`);
+    console.log(`🔄 Calculating highlights for GW${currentGW}`);
     
     const gwHighlights = {
         rocket: { player: null, points: 0 },
@@ -1018,10 +1461,16 @@ async function calculateWeeklyHighlightsFromAPI() {
         bench: { player: null, points: 0 }
     };
     
-    // Get all participants with FPL IDs
-    const participantsWithFPL = participantsData.filter(p => p.fplId && p.fplId !== null);
+    // Get all participants (should all have FPL IDs in API-only mode)
+    const allParticipants = participantsData.filter(p => p.fplId && p.fplId !== null);
     
-    for (const participant of participantsWithFPL) {
+    if (allParticipants.length === 0) {
+        throw new Error('No participants with FPL IDs found. Cannot calculate highlights.');
+    }
+    
+    console.log(`📊 Calculating highlights for ${allParticipants.length} participants`);
+    
+    for (const participant of allParticipants) {
         const picksData = await fetchGameweekPicks(participant.fplId, currentGW);
         if (picksData) {
             const gwPoints = picksData.entry_history.points;
@@ -1044,72 +1493,108 @@ async function calculateWeeklyHighlightsFromAPI() {
                 const captainName = bootstrapData.elements.find(el => el.id === captain)?.web_name || 'Unknown';
                 gwHighlights.captain = { player: participant, captain: captainName, points: gwPoints };
             }
+        } else {
+            console.log(`⚠️ No gameweek data for ${participant.namn} (GW${currentGW})`);
         }
     }
     
     // Update league data with calculated highlights
     leagueData.highlights = {
-        rocket: gwHighlights.rocket.player ? `${gwHighlights.rocket.player.namn} - ${gwHighlights.rocket.points} poäng` : '',
-        flop: gwHighlights.flop.player ? `${gwHighlights.flop.player.namn} - ${gwHighlights.flop.points} poäng` : '',
-        captain: gwHighlights.captain.player ? `${gwHighlights.captain.player.namn} - ${gwHighlights.captain.captain} (${gwHighlights.captain.points} poäng)` : '',
-        bench: gwHighlights.bench.player ? `${gwHighlights.bench.player.namn} - ${gwHighlights.bench.points} poäng` : ''
+        rocket: gwHighlights.rocket.player ? `${gwHighlights.rocket.player.namn} - ${gwHighlights.rocket.points} poäng` : 'Ingen data tillgänglig',
+        flop: gwHighlights.flop.player ? `${gwHighlights.flop.player.namn} - ${gwHighlights.flop.points} poäng` : 'Ingen data tillgänglig',
+        captain: gwHighlights.captain.player ? `${gwHighlights.captain.player.namn} - ${gwHighlights.captain.captain} (${gwHighlights.captain.points} poäng)` : 'Ingen data tillgänglig',
+        bench: gwHighlights.bench.player ? `${gwHighlights.bench.player.namn} - ${gwHighlights.bench.points} poäng` : 'Ingen data tillgänglig'
     };
     
-    console.log('Weekly highlights calculated from API:', leagueData.highlights);
+    console.log('✅ Weekly highlights calculated from API:', leagueData.highlights);
 }
 
-// Initialize FPL data
+// Initialize FPL data - API-Only Mode
 async function initializeFPLData() {
+    console.log('=== INITIALIZING FPL DATA (API-ONLY MODE) ===');
+    console.log('DISABLE_API_CALLS:', DISABLE_API_CALLS);
+    
     if (DISABLE_API_CALLS) {
-        console.log('API calls disabled, using fallback data');
+        console.log('❌ API calls disabled for local development (CORS restriction)');
+        updateDataSourceIndicator('📊 Mock Data (Local Dev)', '#f59e0b', '#000');
         useFallbackData();
         return;
     }
     
-    console.log('=== INITIALIZING FPL DATA ===');
+    console.log('✅ API-ONLY MODE: Fetching real data from FPL API...');
     
     try {
-        // Try to fetch real data from FPL API
-        console.log('Attempting to fetch real data from FPL API...');
+        // Step 1: Fetch bootstrap data and determine current gameweek
+        console.log('🔄 Step 1: Fetching bootstrap data...');
+        const bootstrapData = await fetchBootstrapData();
+        if (!bootstrapData) {
+            throw new Error('Failed to fetch bootstrap data from FPL API');
+        }
         
-        // Update participants with real FPL data
+        // Step 2: Update all participants with real FPL data
+        console.log('🔄 Step 2: Updating all participants with real FPL data...');
         await updateParticipantsWithFPLData();
         
-        // Calculate weekly highlights from real data
-        await calculateWeeklyHighlightsFromAPI();
-        
-        // Generate league tables from real data
+        // Step 3: Generate league tables from real data
+        console.log('🔄 Step 3: Generating league tables from real data...');
         await generateLeagueTablesFromAPI();
         
-        console.log('FPL API data loaded successfully');
+        // Step 4: Calculate weekly highlights from real data
+        console.log('🔄 Step 4: Calculating weekly highlights from real data...');
+        await calculateWeeklyHighlightsFromAPI();
+        
+        // Step 5: Generate roasts from real data
+        console.log('🔄 Step 5: Generating roasts from real data...');
+        await generateRealRoasts();
+        
+        console.log('✅ FPL API data loaded successfully!');
+        console.log('📊 Final leagueData:', leagueData);
+        console.log('👥 Final participantsData:', participantsData);
+        
+        // Update data source indicator
+        updateDataSourceIndicator('🌐 Live FPL Data', '#10b981', '#fff');
         
         // Populate UI with real data
         setTimeout(() => {
+            console.log('🔄 Populating UI with real data...');
             populateTables();
             populateProfiles();
             updateHighlightsFromData();
+            generateRoastMessages();
         }, 100);
         
     } catch (error) {
-        console.error('Error loading FPL API data, falling back to mock data:', error);
+        console.error('❌ CRITICAL ERROR: FPL API is unreachable:', error);
+        updateDataSourceIndicator('❌ API Unreachable', '#ef4444', '#fff');
+        
+        // Show admin notification
+        showAPIErrorNotification();
+        
+        // Only use fallback if API is completely unreachable
+        console.log('🔄 Using fallback data due to API failure...');
         useFallbackData();
     }
 }
 
-// Function to generate league tables from API data
+// Function to generate league tables from API data - API-Only Mode
 async function generateLeagueTablesFromAPI() {
-    console.log('=== GENERATING LEAGUE TABLES FROM API ===');
+    console.log('=== GENERATING LEAGUE TABLES FROM API (API-ONLY) ===');
     
     if (!bootstrapData || !bootstrapData.events) {
-        console.log('No bootstrap data available, using fallback tables');
-        return;
+        throw new Error('No bootstrap data available. Cannot generate league tables in API-only mode.');
     }
     
-    // Get all participants with FPL IDs
-    const participantsWithFPL = participantsData.filter(p => p.fplId && p.fplId !== null);
+    // Get all participants (should all have FPL IDs in API-only mode)
+    const allParticipants = participantsData.filter(p => p.fplId && p.fplId !== null);
+    
+    if (allParticipants.length === 0) {
+        throw new Error('No participants with FPL IDs found. Cannot generate league tables.');
+    }
+    
+    console.log(`📊 Generating tables for ${allParticipants.length} participants`);
     
     // Generate season table from real data
-    leagueData.seasonTable = participantsWithFPL
+    leagueData.seasonTable = allParticipants
         .map(participant => ({
             position: 0, // Will be calculated after sorting
             name: participant.namn,
@@ -1120,36 +1605,47 @@ async function generateLeagueTablesFromAPI() {
         .sort((a, b) => b.points - a.points)
         .map((player, index) => ({ ...player, position: index + 1 }));
     
-    // Generate gameweek table from real data (if we have current GW data)
-    if (currentGameweek > 0) {
-        const gwData = [];
-        for (const participant of participantsWithFPL) {
-            const picksData = await fetchGameweekPicks(participant.fplId, currentGameweek);
-            if (picksData) {
-                gwData.push({
-                    position: 0, // Will be calculated after sorting
-                    name: participant.namn,
-                    points: picksData.entry_history.points,
-                    gameweek: currentGameweek,
-                    managerId: participant.fplId
-                });
-            }
+    // Generate gameweek table from real data
+    console.log(`🔄 Fetching gameweek ${currentGameweek} data for all participants...`);
+    const gwData = [];
+    
+    for (const participant of allParticipants) {
+        const picksData = await fetchGameweekPicks(participant.fplId, currentGameweek);
+        if (picksData) {
+            gwData.push({
+                position: 0, // Will be calculated after sorting
+                name: participant.namn,
+                points: picksData.entry_history.points,
+                gameweek: currentGameweek,
+                managerId: participant.fplId
+            });
+        } else {
+            console.log(`⚠️ No gameweek data for ${participant.namn} (GW${currentGameweek})`);
+            // Add with 0 points if no data available
+            gwData.push({
+                position: 0,
+                name: participant.namn,
+                points: 0,
+                gameweek: currentGameweek,
+                managerId: participant.fplId
+            });
         }
-        
-        leagueData.gameweekTable = gwData
-            .sort((a, b) => b.points - a.points)
-            .map((player, index) => ({ ...player, position: index + 1 }));
     }
     
-    console.log('League tables generated from API:', {
-        seasonTable: leagueData.seasonTable,
-        gameweekTable: leagueData.gameweekTable
+    leagueData.gameweekTable = gwData
+        .sort((a, b) => b.points - a.points)
+        .map((player, index) => ({ ...player, position: index + 1 }));
+    
+    console.log('✅ League tables generated from API:', {
+        seasonTable: leagueData.seasonTable.length,
+        gameweekTable: leagueData.gameweekTable.length
     });
 }
 
-// Use fallback data when API is not available
+// Use fallback data when API is completely unreachable (last resort)
 function useFallbackData() {
-    console.log('=== USING FALLBACK DATA ===');
+    console.log('=== USING FALLBACK DATA (LOCAL DEVELOPMENT) ===');
+    updateDataSourceIndicator('📊 Mock Data (Local Dev)', '#f59e0b', '#000');
     
     // Try to load from localStorage first if we haven't already
     if (participantsData.length === 0) {
@@ -1334,103 +1830,170 @@ function showMainContent() {
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('mainContent').classList.remove('hidden');
     
+    // Add data source indicator
+    addDataSourceIndicator();
+    
     // Initialize FPL data when user logs in
     console.log('Initializing FPL data after login...');
     initializeFPLData();
 }
 
-// Fetch bootstrap data (teams, players, events)
-async function fetchBootstrapData() {
-    try {
-        const response = await fetch(`${FPL_API_BASE}/bootstrap-static/`);
-        const data = await response.json();
-        
-        // Cache teams
-        bootstrapData.teams = {};
-        data.teams.forEach(team => {
-            bootstrapData.teams[team.id] = {
-                name: team.name,
-                short_name: team.short_name,
-                logo: team.code
-            };
-        });
-        
-        // Cache players
-        bootstrapData.players = {};
-        data.elements.forEach(player => {
-            bootstrapData.players[player.id] = {
-                name: player.web_name,
-                total_points: player.total_points,
-                team: player.team
-            };
-        });
-        
-        // Cache events
-        bootstrapData.events = data.events;
-        
-        // Determine current gameweek
-        const currentEvent = data.events.find(event => event.is_current);
-        currentGameweek = currentEvent ? currentEvent.id : 1;
-        
-    } catch (error) {
-        console.error('Error fetching bootstrap data:', error);
-        throw error;
+// Add data source indicator to the page
+function addDataSourceIndicator() {
+    const mainContent = document.getElementById('mainContent');
+    const existingIndicator = document.getElementById('dataSourceIndicator');
+    
+    if (existingIndicator) {
+        existingIndicator.remove();
     }
+    
+    const indicator = document.createElement('div');
+    indicator.id = 'dataSourceIndicator';
+    indicator.style.cssText = `
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        background: #1e293b;
+        color: #06b6d4;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 600;
+        z-index: 1000;
+        border: 1px solid #334155;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        cursor: pointer;
+    `;
+    indicator.textContent = '🔄 Loading...';
+    indicator.onclick = testAPIConnection;
+    
+    mainContent.appendChild(indicator);
+    
+    // Update indicator based on data source
+    setTimeout(() => {
+        if (DISABLE_API_CALLS) {
+            indicator.textContent = '📊 Mock Data';
+            indicator.style.background = '#f59e0b';
+            indicator.style.color = '#000';
+        } else {
+            indicator.textContent = '🌐 Live FPL Data';
+            indicator.style.background = '#10b981';
+            indicator.style.color = '#fff';
+        }
+    }, 2000);
 }
 
-// Fetch league data
-async function fetchLeagueData() {
+// Test API connection manually
+async function testAPIConnection() {
+    console.log('🧪 MANUAL API TEST TRIGGERED');
+    
+    // Check if API calls are disabled
+    if (DISABLE_API_CALLS) {
+        console.log('🧪 API calls are disabled for local development');
+        alert('API calls are currently disabled for local development.\n\nTo test API integration:\n1. Run: node deploy.js\n2. Deploy to a proper web server\n3. API will work when hosted (not file://)');
+        return;
+    }
+    
     try {
-        const response = await fetch(`${FPL_API_BASE}/leagues-classic/${LEAGUE_CODE}/standings/`);
-        const data = await response.json();
+        console.log('🧪 Testing bootstrap API...');
+        const bootstrapTest = await fetch(`${FPL_API_BASE}/bootstrap-static/`);
+        console.log('🧪 Bootstrap response status:', bootstrapTest.status);
         
-        // Process standings
-        leagueData.seasonTable = data.standings.results.map((entry, index) => ({
-            position: index + 1,
-            name: entry.player_name,
-            points: entry.total,
-            gameweek: currentGameweek,
-            managerId: entry.entry
-        }));
-        
-        // Fetch manager history for each player
-        for (let player of leagueData.seasonTable) {
-            await fetchManagerHistory(player);
+        if (bootstrapTest.ok) {
+            const bootstrapData = await bootstrapTest.json();
+            console.log('🧪 Bootstrap test successful:', {
+                events: bootstrapData.events?.length || 0,
+                teams: bootstrapData.teams?.length || 0
+            });
+        } else {
+            throw new Error(`Bootstrap API returned status: ${bootstrapTest.status}`);
         }
         
-        // Calculate gameweek scores
-        calculateGameweekScores();
+        console.log('🧪 Testing player API for ID 1490173 (Melvin Yuksel)...');
+        const playerTest = await fetch(`${FPL_API_BASE}/entry/1490173/`);
+        console.log('🧪 Player response status:', playerTest.status);
         
-        // Update player profiles
-        updatePlayerProfiles();
+        if (playerTest.ok) {
+            const playerData = await playerTest.json();
+            console.log('🧪 Player test successful:', {
+                name: `${playerData.player_first_name} ${playerData.player_last_name}`,
+                points: playerData.summary_overall_points
+            });
+        } else {
+            throw new Error(`Player API returned status: ${playerTest.status}`);
+        }
+        
+        alert('✅ API test successful!\n\nFPL API is working correctly.\nCheck console for detailed results.');
         
     } catch (error) {
-        console.error('Error fetching league data:', error);
-        throw error;
+        console.error('🧪 API test failed:', error);
+        
+        if (error.message.includes('CORS')) {
+            alert('❌ API test failed due to CORS restrictions.\n\nThis is expected when running locally.\nDeploy to a proper web server to enable API integration.');
+        } else {
+            alert(`❌ API test failed!\n\nError: ${error.message}\n\nCheck console for detailed error information.`);
+        }
     }
 }
 
-// Fetch manager history
-async function fetchManagerHistory(player) {
-    try {
-        const response = await fetch(`${FPL_API_BASE}/entry/${player.managerId}/history/`);
-        const data = await response.json();
-        
-        // Extract gameweek points
-        player.gameweekPoints = data.current.map(gw => gw.points);
-        
-        // Get last season rank
-        player.lastSeasonRank = data.past.find(p => p.season_name === '2023/24')?.rank || 'N/A';
-        
-        // Get best gameweek
-        const bestGW = data.current.reduce((best, current) => 
-            current.points > best.points ? current : best);
-        player.bestGameweek = bestGW.points;
-        
-    } catch (error) {
-        console.error(`Error fetching history for ${player.name}:`, error);
+// Update data source indicator
+function updateDataSourceIndicator(text, bgColor, textColor) {
+    const indicator = document.getElementById('dataSourceIndicator');
+    if (indicator) {
+        indicator.textContent = text;
+        indicator.style.background = bgColor;
+        indicator.style.color = textColor;
     }
 }
+
+// Show API error notification to admin
+function showAPIErrorNotification() {
+    const notification = document.createElement('div');
+    notification.id = 'apiErrorNotification';
+    notification.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: #ef4444;
+        color: white;
+        padding: 1rem 1.5rem;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        z-index: 10000;
+        font-weight: 600;
+        text-align: center;
+        max-width: 400px;
+    `;
+    notification.innerHTML = `
+        <div style="margin-bottom: 0.5rem;">⚠️ FPL API Error</div>
+        <div style="font-size: 0.9rem; font-weight: normal;">
+            Unable to fetch real-time data from FPL API.<br>
+            Using fallback data. Check console for details.
+        </div>
+        <button onclick="this.parentElement.remove()" style="
+            margin-top: 1rem;
+            background: white;
+            color: #ef4444;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+        ">OK</button>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    // Auto-remove after 10 seconds
+    setTimeout(() => {
+        if (notification.parentElement) {
+            notification.remove();
+        }
+    }, 10000);
+}
+
+// Note: Duplicate API functions removed - using the ones defined earlier in the file
 
 // Calculate gameweek scores
 function calculateGameweekScores() {
@@ -1914,7 +2477,7 @@ function copyLeagueCode() {
     });
 }
 
-// Generate gamified roast messages
+// Generate gamified roast messages - API-Only Mode
 function generateRoastMessages() {
     const roastGrid = document.getElementById('roastGrid');
     
@@ -1925,62 +2488,40 @@ function generateRoastMessages() {
     
     roastGrid.innerHTML = '';
     
-    // Check if we have real data or should use mock data
-    const useMockData = !bootstrapData.players || Object.keys(bootstrapData.players).length === 0;
+    // In API-only mode, we always use real data
+    console.log('🔄 Generating roast messages from API data...');
     
-    if (useMockData) {
-        
-        // Function to get random participants for roasts
-        function getRandomParticipants(count) {
-            const shuffled = [...participantsData].sort(() => 0.5 - Math.random());
-            return shuffled.slice(0, count);
-        }
-        
-        // Get random participants for different roast categories
-        const randomParticipants = getRandomParticipants(5);
-        
-        // Use mock roast data with random participants (removed duplicates)
-        const mockRoasts = [
-            {
-                type: 'bench-boost',
-                title: 'Bench Boost Fuskare',
-                message: `${randomParticipants[0]?.namn || 'William Kuyumcu'} aktiverade Bench Boost och fick 4 poäng från bänken. Pinsamt.`,
-                player: randomParticipants[0]?.namn || 'William Kuyumcu',
-                emoji: '🤡'
-            },
-            {
-                type: 'minus',
-                title: 'Mest Minuspoäng',
-                message: `${randomParticipants[1]?.namn || 'Sigge Carlsson'} tog -16 i minuspoäng. Snälla radera appen.`,
-                player: randomParticipants[1]?.namn || 'Sigge Carlsson',
-                emoji: '🗑️'
-            },
-            {
-                type: 'bench-explosion',
-                title: 'Skön bänk kungen 🙄',
-                message: `${randomParticipants[2]?.namn || 'Gustav Ekström'} hade 22p på bänken. Bästa bänken någonsin!`,
-                player: randomParticipants[2]?.namn || 'Gustav Ekström',
-                emoji: '🔥'
-            }
-        ];
-        
-        // Show all 3 roasts (no expansion needed)
-        mockRoasts.forEach(roast => {
-            const card = createRoastCard(roast);
-            roastGrid.appendChild(card);
-        });
-        
-        // No remaining roasts for expansion
-        roastGrid.dataset.remainingRoasts = JSON.stringify([]);
-    } else {
-        console.log('Using real roast data');
-        // Generate roasts from real data
-        generateRealRoasts().then(realRoasts => {
+    // Generate roasts from real data
+    generateRealRoasts().then(realRoasts => {
+        if (realRoasts && realRoasts.length > 0) {
             realRoasts.forEach(roast => {
                 roastGrid.appendChild(createRoastCard(roast));
             });
+            console.log(`✅ Displayed ${realRoasts.length} roasts from API data`);
+        } else {
+            // Fallback message if no roasts generated
+            const fallbackCard = createRoastCard({
+                type: 'fallback',
+                title: 'Ingen data tillgänglig',
+                message: 'Kunde inte ladda roast-data från FPL API just nu.',
+                player: 'System',
+                emoji: '⚠️'
+            });
+            roastGrid.appendChild(fallbackCard);
+            console.log('⚠️ No roasts generated, showing fallback message');
+        }
+    }).catch(error => {
+        console.error('❌ Error generating roasts:', error);
+        // Show error message
+        const errorCard = createRoastCard({
+            type: 'error',
+            title: 'API Fel',
+            message: 'Kunde inte ladda roast-data från FPL API.',
+            player: 'System',
+            emoji: '❌'
         });
-    }
+        roastGrid.appendChild(errorCard);
+    });
 }
 
 // Create roast card element
@@ -1998,22 +2539,25 @@ function createRoastCard(roast) {
     return card;
 }
 
-// Generate real roasts from API data
+// Generate real roasts from API data - API-Only Mode
 async function generateRealRoasts() {
+    console.log('=== GENERATING REAL ROASTS FROM API (API-ONLY) ===');
+    
     const roasts = [];
     
-    // Get participants with FPL IDs
-    const participantsWithFPL = participantsData.filter(p => p.fplId && p.fplId !== null);
+    // Get all participants (should all have FPL IDs in API-only mode)
+    const allParticipants = participantsData.filter(p => p.fplId && p.fplId !== null);
     
-    if (participantsWithFPL.length === 0) {
-        console.log('No participants with FPL IDs, using mock roasts');
-        return [];
+    if (allParticipants.length === 0) {
+        throw new Error('No participants with FPL IDs found. Cannot generate roasts in API-only mode.');
     }
+    
+    console.log(`📊 Generating roasts for ${allParticipants.length} participants`);
     
     // Calculate various roast-worthy statistics
     const roastStats = [];
     
-    for (const participant of participantsWithFPL) {
+    for (const participant of allParticipants) {
         const picksData = await fetchGameweekPicks(participant.fplId, currentGameweek);
         if (picksData) {
             const gwPoints = picksData.entry_history.points;
@@ -2031,6 +2575,8 @@ async function generateRealRoasts() {
                 transfers,
                 transferCost
             });
+        } else {
+            console.log(`⚠️ No gameweek data for ${participant.namn} (GW${currentGameweek})`);
         }
     }
     
@@ -2078,8 +2624,24 @@ async function generateRealRoasts() {
                 emoji: '🔄'
             });
         }
+        
+        // Best bench points (if significant)
+        const bestBench = roastStats.reduce((best, current) => 
+            current.benchPoints > best.benchPoints ? current : best
+        );
+        
+        if (bestBench.benchPoints > 10) {
+            roasts.push({
+                type: 'bench',
+                title: 'Skön bänk kungen 🙄',
+                message: `${bestBench.participant.namn} hade ${bestBench.benchPoints}p på bänken. Bästa bänken någonsin!`,
+                player: bestBench.participant.namn,
+                emoji: '🔥'
+            });
+        }
     }
     
+    console.log(`✅ Generated ${roasts.length} roasts from API data`);
     return roasts;
 }
 
