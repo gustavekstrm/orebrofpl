@@ -1314,9 +1314,20 @@ async function fetchBootstrapData() {
         console.error('❌ Error fetching bootstrap data:', error);
         console.error('❌ Error details:', {
             message: error.message,
-            stack: error.stack
+            stack: error.stack,
+            type: error.name
         });
-        return null;
+        
+        // Check for specific error types
+        if (error.message.includes('CORS') || error.message.includes('Access-Control-Allow-Origin')) {
+            console.log('⚠️ CORS error detected in bootstrap fetch');
+            throw new Error('CORS policy blocks API calls from public hosting');
+        } else if (error.message.includes('Failed to fetch')) {
+            console.log('⚠️ Network error detected in bootstrap fetch');
+            throw new Error('Network error - FPL API may be temporarily unavailable');
+        } else {
+            throw error;
+        }
     }
 }
 
@@ -1619,10 +1630,14 @@ async function initializeFPLData() {
         if (error.message.includes('CORS') || error.message.includes('Access-Control-Allow-Origin')) {
             console.log('⚠️ CORS error detected - this is expected on public hosting');
             updateDataSourceIndicator('⚠️ CORS Blocked', '#f59e0b', '#000');
-            showAPIErrorNotification('CORS policy blocks API calls from public hosting. Using fallback data.');
+            showAPIErrorNotification('CORS policy blocks API calls from public hosting. This is normal for public websites. Using fallback data.');
+        } else if (error.message.includes('Network error')) {
+            console.log('⚠️ Network error detected - FPL API may be temporarily unavailable');
+            updateDataSourceIndicator('⚠️ Network Error', '#f59e0b', '#000');
+            showAPIErrorNotification('Network error - FPL API may be temporarily unavailable. Using fallback data.');
         } else {
             updateDataSourceIndicator('❌ API Error', '#ef4444', '#fff');
-            showAPIErrorNotification(error.message);
+            showAPIErrorNotification(`API Error: ${error.message}. Using fallback data.`);
         }
         
         // Use fallback data
@@ -1700,8 +1715,20 @@ async function generateLeagueTablesFromAPI() {
 
 // Use fallback data when API is completely unreachable (last resort)
 function useFallbackData() {
-    console.log('=== USING FALLBACK DATA (LOCAL DEVELOPMENT) ===');
-    updateDataSourceIndicator('📊 Mock Data (Local Dev)', '#f59e0b', '#000');
+    console.log('=== USING FALLBACK DATA (API UNAVAILABLE) ===');
+    
+    // Determine the appropriate indicator text
+    let indicatorText = '📊 Mock Data';
+    let indicatorColor = '#f59e0b';
+    let textColor = '#000';
+    
+    if (DISABLE_API_CALLS) {
+        indicatorText = '📊 Mock Data (Local Dev)';
+    } else {
+        indicatorText = '📊 Mock Data (API Failed)';
+    }
+    
+    updateDataSourceIndicator(indicatorText, indicatorColor, textColor);
     
     // Try to load from localStorage first if we haven't already
     if (participantsData.length === 0) {
@@ -1732,14 +1759,14 @@ function useFallbackData() {
             position: index + 1,
             name: participant.namn,
             points: participant.totalPoäng,
-            gameweek: 38,
+            gameweek: currentGameweek,
             managerId: participant.fplId || (123456 + index) // Fallback ID if no FPL ID
         })),
         gameweekTable: participantsData.map((participant, index) => ({
             position: index + 1,
             name: participant.namn,
             points: Math.floor(Math.random() * 50) + 45, // Mock gameweek points
-            gameweek: 38,
+            gameweek: currentGameweek,
             managerId: participant.fplId || (123456 + index)
         })).sort((a, b) => b.points - a.points).map((player, index) => ({ ...player, position: index + 1 })),
         highlights: {
@@ -1765,8 +1792,11 @@ function useFallbackData() {
     console.log('Gameweek table length:', leagueData.gameweekTable.length);
     console.log('Players length:', leagueData.players.length);
     
-    // Set current gameweek
-    currentGameweek = 38;
+    // Set current gameweek (should already be set to 1, but ensure it's correct)
+    if (currentGameweek !== 1) {
+        currentGameweek = 1;
+        console.log('Updated currentGameweek to 1 for new season');
+    }
     
     // Initialize prize chart
     console.log('Initializing prize chart...');
