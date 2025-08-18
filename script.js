@@ -6,7 +6,7 @@ const FPL_API_BASE = 'https://fantasy.premierleague.com/api';
 const LEAGUE_CODE = '46mnf2';
 
 // Global flag to disable API calls for local development
-const DISABLE_API_CALLS = true; // Set to false when deployed to a proper server
+const DISABLE_API_CALLS = false; // Set to false when deployed to a proper server
 
 // Global data storage
 let isLoggedIn = false;
@@ -64,7 +64,7 @@ const participantsData = [
         namn: 'Melvin Yuksel',
         totalPoäng: 2456,
         favoritlag: 'Manchester United',
-        fplId: null, // Will be set when linked to FPL account
+        fplId: 123456, // Sample FPL ID for testing
         profilRoast: 'Har haft fler minuspoäng än rena lakan den här säsongen.',
         image: generateAvatarDataURL('M'),
         lastSeasonRank: 12,
@@ -74,7 +74,7 @@ const participantsData = [
         namn: 'Jakob Gårlin',
         totalPoäng: 2412,
         favoritlag: 'Liverpool',
-        fplId: null,
+        fplId: 234567, // Sample FPL ID for testing
         profilRoast: 'Enda som är sämre än din kaptensval är din senaste bortamatch.',
         image: generateAvatarDataURL('J'),
         lastSeasonRank: 8,
@@ -880,38 +880,271 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
+// FPL API Integration Functions
+async function fetchBootstrapData() {
+    try {
+        console.log('Fetching bootstrap data from FPL API...');
+        const response = await fetch(`${FPL_API_BASE}/bootstrap-static/`);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        bootstrapData = data;
+        console.log('Bootstrap data fetched successfully:', data);
+        return data;
+    } catch (error) {
+        console.error('Error fetching bootstrap data:', error);
+        return null;
+    }
+}
+
+async function fetchPlayerData(fplId) {
+    try {
+        console.log(`Fetching player data for FPL ID: ${fplId}`);
+        
+        // Fetch current season data
+        const currentResponse = await fetch(`${FPL_API_BASE}/entry/${fplId}/`);
+        if (!currentResponse.ok) {
+            throw new Error(`HTTP error! status: ${currentResponse.status}`);
+        }
+        const currentData = await currentResponse.json();
+        
+        // Fetch historical data
+        const historyResponse = await fetch(`${FPL_API_BASE}/entry/${fplId}/history/`);
+        if (!historyResponse.ok) {
+            throw new Error(`HTTP error! status: ${historyResponse.status}`);
+        }
+        const historyData = await historyResponse.json();
+        
+        console.log(`Player data fetched for FPL ID ${fplId}:`, { currentData, historyData });
+        return { currentData, historyData };
+    } catch (error) {
+        console.error(`Error fetching player data for FPL ID ${fplId}:`, error);
+        return null;
+    }
+}
+
+async function fetchGameweekPicks(fplId, gameweek) {
+    try {
+        console.log(`Fetching GW${gameweek} picks for FPL ID: ${fplId}`);
+        const response = await fetch(`${FPL_API_BASE}/entry/${fplId}/event/${gameweek}/picks/`);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        console.log(`GW${gameweek} picks fetched for FPL ID ${fplId}:`, data);
+        return data;
+    } catch (error) {
+        console.error(`Error fetching GW${gameweek} picks for FPL ID ${fplId}:`, error);
+        return null;
+    }
+}
+
+async function fetchLeagueData() {
+    try {
+        console.log('Fetching league data from FPL API...');
+        const response = await fetch(`${FPL_API_BASE}/leagues-classic/${LEAGUE_CODE}/standings/`);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        console.log('League data fetched successfully:', data);
+        return data;
+    } catch (error) {
+        console.error('Error fetching league data:', error);
+        return null;
+    }
+}
+
+// Function to update participantsData with real FPL data
+async function updateParticipantsWithFPLData() {
+    console.log('=== UPDATING PARTICIPANTS WITH FPL DATA ===');
+    
+    // First, fetch bootstrap data to get current gameweek
+    const bootstrapData = await fetchBootstrapData();
+    if (bootstrapData) {
+        currentGameweek = bootstrapData.events.find(event => event.finished === false)?.id || 38;
+        console.log('Current gameweek determined:', currentGameweek);
+    }
+    
+    // Update each participant that has an FPL ID
+    for (let i = 0; i < participantsData.length; i++) {
+        const participant = participantsData[i];
+        
+        if (participant.fplId && participant.fplId !== null) {
+            console.log(`Updating participant ${participant.namn} with FPL ID ${participant.fplId}`);
+            
+            const playerData = await fetchPlayerData(participant.fplId);
+            if (playerData) {
+                const { currentData, historyData } = playerData;
+                
+                // Update with real data
+                participantsData[i] = {
+                    ...participant, // Keep existing data (roasts, image, etc.)
+                    namn: currentData.player_first_name + ' ' + currentData.player_last_name,
+                    totalPoäng: currentData.summary_overall_points,
+                    lastSeasonRank: historyData.past?.find(past => past.season_name === '2023/24')?.rank || participant.lastSeasonRank,
+                    bestGameweek: Math.max(...historyData.current.map(gw => gw.points), 0)
+                };
+                
+                console.log(`Updated ${participant.namn} with real data:`, participantsData[i]);
+            }
+        } else {
+            console.log(`Participant ${participant.namn} has no FPL ID, keeping mock data`);
+        }
+    }
+    
+    // Save updated data to localStorage
+    localStorage.setItem('fplParticipantsData', JSON.stringify(participantsData));
+    console.log('Participants data updated and saved to localStorage');
+}
+
+// Function to calculate weekly highlights from real FPL data
+async function calculateWeeklyHighlightsFromAPI() {
+    console.log('=== CALCULATING WEEKLY HIGHLIGHTS FROM API ===');
+    
+    if (!bootstrapData || !bootstrapData.events) {
+        console.log('No bootstrap data available, using fallback highlights');
+        return;
+    }
+    
+    const currentGW = currentGameweek;
+    console.log(`Calculating highlights for GW${currentGW}`);
+    
+    const gwHighlights = {
+        rocket: { player: null, points: 0 },
+        flop: { player: null, points: 999 },
+        captain: { player: null, captain: '', points: 0 },
+        bench: { player: null, points: 0 }
+    };
+    
+    // Get all participants with FPL IDs
+    const participantsWithFPL = participantsData.filter(p => p.fplId && p.fplId !== null);
+    
+    for (const participant of participantsWithFPL) {
+        const picksData = await fetchGameweekPicks(participant.fplId, currentGW);
+        if (picksData) {
+            const gwPoints = picksData.entry_history.points;
+            const captain = picksData.picks.find(pick => pick.is_captain)?.element || null;
+            const benchPoints = picksData.picks.filter(pick => pick.position > 11).reduce((sum, pick) => sum + (pick.multiplier > 0 ? pick.points : 0), 0);
+            
+            // Update highlights
+            if (gwPoints > gwHighlights.rocket.points) {
+                gwHighlights.rocket = { player: participant, points: gwPoints };
+            }
+            if (gwPoints < gwHighlights.flop.points) {
+                gwHighlights.flop = { player: participant, points: gwPoints };
+            }
+            if (benchPoints > gwHighlights.bench.points) {
+                gwHighlights.bench = { player: participant, points: benchPoints };
+            }
+            
+            // Captain highlight (lowest captain points)
+            if (captain && gwPoints < gwHighlights.captain.points) {
+                const captainName = bootstrapData.elements.find(el => el.id === captain)?.web_name || 'Unknown';
+                gwHighlights.captain = { player: participant, captain: captainName, points: gwPoints };
+            }
+        }
+    }
+    
+    // Update league data with calculated highlights
+    leagueData.highlights = {
+        rocket: gwHighlights.rocket.player ? `${gwHighlights.rocket.player.namn} - ${gwHighlights.rocket.points} poäng` : '',
+        flop: gwHighlights.flop.player ? `${gwHighlights.flop.player.namn} - ${gwHighlights.flop.points} poäng` : '',
+        captain: gwHighlights.captain.player ? `${gwHighlights.captain.player.namn} - ${gwHighlights.captain.captain} (${gwHighlights.captain.points} poäng)` : '',
+        bench: gwHighlights.bench.player ? `${gwHighlights.bench.player.namn} - ${gwHighlights.bench.points} poäng` : ''
+    };
+    
+    console.log('Weekly highlights calculated from API:', leagueData.highlights);
+}
+
 // Initialize FPL data
 async function initializeFPLData() {
-    // For local development, always use fallback data to avoid CORS issues
-    // TODO: Enable API calls when deployed to a proper server
-    console.log('Using fallback data for local development (CORS-safe)');
-    useFallbackData();
+    if (DISABLE_API_CALLS) {
+        console.log('API calls disabled, using fallback data');
+        useFallbackData();
+        return;
+    }
     
-    /* 
-    // API calls disabled for local development due to CORS restrictions
-    // Uncomment when deployed to a proper server
+    console.log('=== INITIALIZING FPL DATA ===');
+    
     try {
-        showLoadingState();
-        await fetchBootstrapData();
-        await fetchLeagueData();
+        // Try to fetch real data from FPL API
+        console.log('Attempting to fetch real data from FPL API...');
         
-        // TODO: After Gameweek 1, uncomment to fetch real participant data
-        // await updateParticipantsWithFPLData();
+        // Update participants with real FPL data
+        await updateParticipantsWithFPLData();
         
-        hideLoadingState();
+        // Calculate weekly highlights from real data
+        await calculateWeeklyHighlightsFromAPI();
         
-            // Initialize UI components after successful data loading
-    populateTables();
-    populateProfiles();
-    updateHighlightsFromData();
+        // Generate league tables from real data
+        await generateLeagueTablesFromAPI();
+        
+        console.log('FPL API data loaded successfully');
+        
+        // Populate UI with real data
+        setTimeout(() => {
+            populateTables();
+            populateProfiles();
+            updateHighlightsFromData();
+        }, 100);
         
     } catch (error) {
-        console.error('Error initializing FPL data:', error);
-        hideLoadingState();
-        // Use fallback data instead of showing error
+        console.error('Error loading FPL API data, falling back to mock data:', error);
         useFallbackData();
     }
-    */
+}
+
+// Function to generate league tables from API data
+async function generateLeagueTablesFromAPI() {
+    console.log('=== GENERATING LEAGUE TABLES FROM API ===');
+    
+    if (!bootstrapData || !bootstrapData.events) {
+        console.log('No bootstrap data available, using fallback tables');
+        return;
+    }
+    
+    // Get all participants with FPL IDs
+    const participantsWithFPL = participantsData.filter(p => p.fplId && p.fplId !== null);
+    
+    // Generate season table from real data
+    leagueData.seasonTable = participantsWithFPL
+        .map(participant => ({
+            position: 0, // Will be calculated after sorting
+            name: participant.namn,
+            points: participant.totalPoäng,
+            gameweek: currentGameweek,
+            managerId: participant.fplId
+        }))
+        .sort((a, b) => b.points - a.points)
+        .map((player, index) => ({ ...player, position: index + 1 }));
+    
+    // Generate gameweek table from real data (if we have current GW data)
+    if (currentGameweek > 0) {
+        const gwData = [];
+        for (const participant of participantsWithFPL) {
+            const picksData = await fetchGameweekPicks(participant.fplId, currentGameweek);
+            if (picksData) {
+                gwData.push({
+                    position: 0, // Will be calculated after sorting
+                    name: participant.namn,
+                    points: picksData.entry_history.points,
+                    gameweek: currentGameweek,
+                    managerId: participant.fplId
+                });
+            }
+        }
+        
+        leagueData.gameweekTable = gwData
+            .sort((a, b) => b.points - a.points)
+            .map((player, index) => ({ ...player, position: index + 1 }));
+    }
+    
+    console.log('League tables generated from API:', {
+        seasonTable: leagueData.seasonTable,
+        gameweekTable: leagueData.gameweekTable
+    });
 }
 
 // Use fallback data when API is not available
@@ -1742,9 +1975,10 @@ function generateRoastMessages() {
     } else {
         console.log('Using real roast data');
         // Generate roasts from real data
-        const realRoasts = generateRealRoasts();
-        realRoasts.forEach(roast => {
-            roastGrid.appendChild(createRoastCard(roast));
+        generateRealRoasts().then(realRoasts => {
+            realRoasts.forEach(roast => {
+                roastGrid.appendChild(createRoastCard(roast));
+            });
         });
     }
 }
@@ -1765,23 +1999,86 @@ function createRoastCard(roast) {
 }
 
 // Generate real roasts from API data
-function generateRealRoasts() {
+async function generateRealRoasts() {
     const roasts = [];
     
-    // Veckans Sopa
-    if (leagueData.gameweekTable.length > 0) {
-        const worstPlayer = leagueData.gameweekTable[leagueData.gameweekTable.length - 1];
+    // Get participants with FPL IDs
+    const participantsWithFPL = participantsData.filter(p => p.fplId && p.fplId !== null);
+    
+    if (participantsWithFPL.length === 0) {
+        console.log('No participants with FPL IDs, using mock roasts');
+        return [];
+    }
+    
+    // Calculate various roast-worthy statistics
+    const roastStats = [];
+    
+    for (const participant of participantsWithFPL) {
+        const picksData = await fetchGameweekPicks(participant.fplId, currentGameweek);
+        if (picksData) {
+            const gwPoints = picksData.entry_history.points;
+            const captain = picksData.picks.find(pick => pick.is_captain);
+            const captainPoints = captain ? captain.points * captain.multiplier : 0;
+            const benchPoints = picksData.picks.filter(pick => pick.position > 11).reduce((sum, pick) => sum + (pick.multiplier > 0 ? pick.points : 0), 0);
+            const transfers = picksData.entry_history.event_transfers;
+            const transferCost = picksData.entry_history.event_transfers_cost;
+            
+            roastStats.push({
+                participant,
+                gwPoints,
+                captainPoints,
+                benchPoints,
+                transfers,
+                transferCost
+            });
+        }
+    }
+    
+    // Generate roasts based on real data
+    if (roastStats.length > 0) {
+        // Worst gameweek performance
+        const worstPlayer = roastStats.reduce((worst, current) => 
+            current.gwPoints < worst.gwPoints ? current : worst
+        );
+        
         roasts.push({
             type: 'sopa',
             title: 'Veckans Sopa',
-            message: 'Du fick minst poäng i ligan den här veckan. Du förtjänar INTE en iskall öl.',
-            player: worstPlayer.name,
+            message: `${worstPlayer.participant.namn} fick bara ${worstPlayer.gwPoints} poäng den här veckan. Pinsamt.`,
+            player: worstPlayer.participant.namn,
             emoji: '🍺🚫'
         });
+        
+        // Worst captain choice
+        const worstCaptain = roastStats.reduce((worst, current) => 
+            current.captainPoints < worst.captainPoints ? current : worst
+        );
+        
+        if (worstCaptain.captainPoints < 4) {
+            roasts.push({
+                type: 'captain',
+                title: 'Kaptenmiss',
+                message: `${worstCaptain.participant.namn} kapten fick bara ${worstCaptain.captainPoints} poäng. Kaptenkaos!`,
+                player: worstCaptain.participant.namn,
+                emoji: '❗'
+            });
+        }
+        
+        // Most transfers (wasteful)
+        const transferHappy = roastStats.reduce((most, current) => 
+            current.transfers > most.transfers ? current : most
+        );
+        
+        if (transferHappy.transfers > 2) {
+            roasts.push({
+                type: 'transfers',
+                title: 'Transfer Happy',
+                message: `${transferHappy.participant.namn} gjorde ${transferHappy.transfers} transfers (-${transferHappy.transferCost} poäng). Trigger happy!`,
+                player: transferHappy.participant.namn,
+                emoji: '🔄'
+            });
+        }
     }
-    
-    // Add more real roasts based on available data
-    // This would be expanded with more sophisticated logic
     
     return roasts;
 }
