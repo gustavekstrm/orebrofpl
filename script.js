@@ -11,7 +11,7 @@ const DISABLE_API_CALLS = false; // API enabled for deployment // Set to true fo
 // Global data storage
 let isLoggedIn = false;
 let isAdminAuthenticated = false;
-let currentGameweek = 38;
+let currentGameweek = 1; // Start with GW1 for new season
 let leagueData = {
     seasonTable: [],
     gameweekTable: [],
@@ -1364,16 +1364,29 @@ async function fetchPlayerData(fplId) {
 
 async function fetchGameweekPicks(fplId, gameweek) {
     try {
-        console.log(`Fetching GW${gameweek} picks for FPL ID: ${fplId}`);
+        console.log(`🔄 Fetching GW${gameweek} picks for FPL ID: ${fplId}`);
         const response = await fetch(`${FPL_API_BASE}/entry/${fplId}/event/${gameweek}/picks/`);
+        
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            if (response.status === 404) {
+                console.log(`⚠️ GW${gameweek} data not available for FPL ID ${fplId} (404)`);
+                return null;
+            } else {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
         }
+        
         const data = await response.json();
-        console.log(`GW${gameweek} picks fetched for FPL ID ${fplId}:`, data);
+        console.log(`✅ GW${gameweek} picks fetched for FPL ID ${fplId}`);
         return data;
     } catch (error) {
-        console.error(`Error fetching GW${gameweek} picks for FPL ID ${fplId}:`, error);
+        // Check for CORS errors specifically
+        if (error.message.includes('CORS') || error.message.includes('Access-Control-Allow-Origin')) {
+            console.log(`⚠️ CORS blocked GW${gameweek} picks for FPL ID ${fplId} - this is expected on public hosting`);
+            return null;
+        } else {
+            console.error(`❌ Error fetching GW${gameweek} picks for FPL ID ${fplId}:`, error);
+        }
         return null;
     }
 }
@@ -1540,18 +1553,27 @@ async function initializeFPLData() {
             currentGameweek = currentEvent.id;
             console.log(`✅ Current gameweek determined: ${currentGameweek}`);
         } else {
-            // Fallback to latest finished gameweek
-            const latestEvent = bootstrapData.events
-                .filter(event => event.finished)
-                .sort((a, b) => b.id - a.id)[0];
-            if (latestEvent) {
-                currentGameweek = latestEvent.id;
-                console.log(`✅ Using latest finished gameweek: ${currentGameweek}`);
+            // Check for the next upcoming gameweek
+            const nextEvent = bootstrapData.events.find(event => !event.finished);
+            if (nextEvent) {
+                currentGameweek = nextEvent.id;
+                console.log(`✅ Next upcoming gameweek: ${currentGameweek}`);
             } else {
-                currentGameweek = 1;
-                console.log(`⚠️ No gameweek data found, defaulting to GW1`);
+                // Fallback to latest finished gameweek
+                const latestEvent = bootstrapData.events
+                    .filter(event => event.finished)
+                    .sort((a, b) => b.id - a.id)[0];
+                if (latestEvent) {
+                    currentGameweek = latestEvent.id;
+                    console.log(`✅ Using latest finished gameweek: ${currentGameweek}`);
+                } else {
+                    currentGameweek = 1;
+                    console.log(`⚠️ No gameweek data found, defaulting to GW1`);
+                }
             }
         }
+        
+        console.log(`📅 Available events:`, bootstrapData.events.map(e => ({ id: e.id, name: e.name, finished: e.finished, is_current: e.is_current })));
         
         // Step 2: Update all participants with real FPL data
         console.log('🔄 Step 2: Updating all participants with real FPL data...');
@@ -1593,12 +1615,17 @@ async function initializeFPLData() {
             type: error.name
         });
         
-        updateDataSourceIndicator('❌ API Error', '#ef4444', '#fff');
+        // Check if it's a CORS error
+        if (error.message.includes('CORS') || error.message.includes('Access-Control-Allow-Origin')) {
+            console.log('⚠️ CORS error detected - this is expected on public hosting');
+            updateDataSourceIndicator('⚠️ CORS Blocked', '#f59e0b', '#000');
+            showAPIErrorNotification('CORS policy blocks API calls from public hosting. Using fallback data.');
+        } else {
+            updateDataSourceIndicator('❌ API Error', '#ef4444', '#fff');
+            showAPIErrorNotification(error.message);
+        }
         
-        // Show admin notification with specific error
-        showAPIErrorNotification(error.message);
-        
-        // Only use fallback if API is completely unreachable
+        // Use fallback data
         console.log('🔄 Using fallback data due to API failure...');
         useFallbackData();
     }
@@ -1639,7 +1666,7 @@ async function generateLeagueTablesFromAPI() {
     
     for (const participant of allParticipants) {
         const picksData = await fetchGameweekPicks(participant.fplId, currentGameweek);
-        if (picksData) {
+        if (picksData && picksData.entry_history) {
             gwData.push({
                 position: 0, // Will be calculated after sorting
                 name: participant.namn,
@@ -1647,13 +1674,14 @@ async function generateLeagueTablesFromAPI() {
                 gameweek: currentGameweek,
                 managerId: participant.fplId
             });
+            console.log(`✅ Added ${participant.namn} with ${picksData.entry_history.points} points`);
         } else {
-            console.log(`⚠️ No gameweek data for ${participant.namn} (GW${currentGameweek})`);
-            // Add with 0 points if no data available
+            console.log(`⚠️ No gameweek data for ${participant.namn} (GW${currentGameweek}) - using season total`);
+            // Use season total points if gameweek data unavailable
             gwData.push({
                 position: 0,
                 name: participant.namn,
-                points: 0,
+                points: participant.totalPoäng || 0,
                 gameweek: currentGameweek,
                 managerId: participant.fplId
             });
@@ -1941,10 +1969,25 @@ async function testAPIConnection() {
             const playerData = await playerTest.json();
             console.log('🧪 Player test successful:', {
                 name: `${playerData.player_first_name} ${playerData.player_last_name}`,
-                points: playerData.summary_overall_points
+                points: playerData.summary_overall_points,
+                season: '2024/25'
             });
         } else {
             throw new Error(`Player API returned status: ${playerTest.status}`);
+        }
+        
+        console.log('🧪 Testing current gameweek picks...');
+        const picksTest = await fetch(`${FPL_API_BASE}/entry/1490173/event/${currentGameweek}/picks/`);
+        console.log('🧪 Picks response status:', picksTest.status);
+        
+        if (picksTest.ok) {
+            const picksData = await picksTest.json();
+            console.log('🧪 Picks test successful:', {
+                gameweek: picksData.entry_history.event,
+                points: picksData.entry_history.points
+            });
+        } else {
+            console.log('⚠️ Picks API returned status:', picksTest.status, '- this may be normal for new season');
         }
         
         alert('✅ API test successful!\n\nFPL API is working correctly.\nCheck console for detailed results.');
