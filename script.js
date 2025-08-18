@@ -1531,6 +1531,25 @@ async function initializeFPLData() {
             throw new Error('Failed to fetch bootstrap data from FPL API');
         }
         
+        // Determine current gameweek from bootstrap data
+        const currentEvent = bootstrapData.events.find(event => event.is_current);
+        if (currentEvent) {
+            currentGameweek = currentEvent.id;
+            console.log(`✅ Current gameweek determined: ${currentGameweek}`);
+        } else {
+            // Fallback to latest finished gameweek
+            const latestEvent = bootstrapData.events
+                .filter(event => event.finished)
+                .sort((a, b) => b.id - a.id)[0];
+            if (latestEvent) {
+                currentGameweek = latestEvent.id;
+                console.log(`✅ Using latest finished gameweek: ${currentGameweek}`);
+            } else {
+                currentGameweek = 1;
+                console.log(`⚠️ No gameweek data found, defaulting to GW1`);
+            }
+        }
+        
         // Step 2: Update all participants with real FPL data
         console.log('🔄 Step 2: Updating all participants with real FPL data...');
         await updateParticipantsWithFPLData();
@@ -2144,10 +2163,28 @@ function populateSeasonTable() {
 }
 
 function populateGameweekTable() {
+    console.log('=== POPULATE GAMEWEEK TABLE ===');
+    console.log('leagueData.gameweekTable:', leagueData.gameweekTable);
+    console.log('leagueData.gameweekTable length:', leagueData.gameweekTable ? leagueData.gameweekTable.length : 'UNDEFINED');
+    
     const tbody = document.getElementById('gameweekTableBody');
+    console.log('gameweekTableBody element:', tbody);
+    
+    if (!tbody) {
+        console.error('CRITICAL ERROR: gameweekTableBody not found!');
+        return;
+    }
+    
+    if (!leagueData.gameweekTable || leagueData.gameweekTable.length === 0) {
+        console.error('CRITICAL ERROR: leagueData.gameweekTable is empty!');
+        tbody.innerHTML = '<tr><td colspan="4">No gameweek data available</td></tr>';
+        return;
+    }
+    
     tbody.innerHTML = '';
     
-    leagueData.gameweekTable.forEach(player => {
+    leagueData.gameweekTable.forEach((player, index) => {
+        console.log(`Creating GW row ${index + 1} for player:`, player);
         const row = document.createElement('tr');
         row.innerHTML = `
             <td>${player.position}</td>
@@ -2163,6 +2200,8 @@ function populateGameweekTable() {
     if (gameweekLabel) {
         gameweekLabel.textContent = `Gameweek ${currentGameweek}`;
     }
+    
+    console.log('Gameweek table populated with', leagueData.gameweekTable.length, 'rows');
 }
 
 
@@ -2192,7 +2231,8 @@ async function updateHighlightsFromData() {
     }
     
     // Check if we have real data or should use mock data
-    const useMockData = !bootstrapData.players || Object.keys(bootstrapData.players).length === 0;
+    // In API-only mode, we should always use real data if available
+    const useMockData = DISABLE_API_CALLS || !leagueData.gameweekTable || leagueData.gameweekTable.length === 0;
     
     if (useMockData) {
         console.log('=== DEBUGGING WEEKLY HIGHLIGHTS ===');
@@ -2362,8 +2402,8 @@ function updateHighlights() {
 // Populate player profiles
 function populateProfiles() {
     console.log('=== POPULATE PROFILES ===');
-    console.log('leagueData.players:', leagueData.players);
-    console.log('leagueData.players length:', leagueData.players ? leagueData.players.length : 'UNDEFINED');
+    console.log('participantsData:', participantsData);
+    console.log('participantsData length:', participantsData ? participantsData.length : 'UNDEFINED');
     
     const profilesGrid = document.getElementById('profilesGrid');
     console.log('profilesGrid element:', profilesGrid);
@@ -2373,15 +2413,15 @@ function populateProfiles() {
         return;
     }
     
-    if (!leagueData.players || leagueData.players.length === 0) {
-        console.error('CRITICAL ERROR: leagueData.players is empty!');
+    if (!participantsData || participantsData.length === 0) {
+        console.error('CRITICAL ERROR: participantsData is empty!');
         profilesGrid.innerHTML = '<div style="text-align: center; padding: 2rem; color: #94a3b8;">No participants available</div>';
         return;
     }
     
     profilesGrid.innerHTML = '';
     
-    leagueData.players.forEach((player, index) => {
+    participantsData.forEach((player, index) => {
         console.log(`Creating profile card ${index + 1} for player:`, player);
         const playerCard = document.createElement('div');
         playerCard.className = 'player-card';
@@ -2393,20 +2433,20 @@ function populateProfiles() {
         
         playerCard.innerHTML = `
             <div class="player-header">
-                <img src="${player.image}" alt="${player.name}" class="player-avatar">
+                <img src="${player.image}" alt="${player.namn}" class="player-avatar">
                 <div class="player-info">
                     <h3 title="Bästa GW någonsin: ${player.bestGameweek} poäng">
-                        ${player.name}
-                        <img src="${teamIcon}" alt="${player.team}" class="team-icon" />
+                        ${player.namn}
+                        ${player.favoritlag ? `<span class="team-name">(${player.favoritlag})</span>` : ''}
                         <i class="fas fa-trophy" style="color: #f59e0b; font-size: 0.875rem;"></i>
                     </h3>
-                    <p>${player.team}</p>
+                    <p>${player.favoritlag || 'Inget favoritlag'}</p>
                 </div>
             </div>
             <div class="player-stats">
                 <div class="stat">
                     <span class="stat-label">Totala poäng</span>
-                    <span class="stat-value">${player.points}</span>
+                    <span class="stat-value">${player.totalPoäng}</span>
                 </div>
                 <div class="stat">
                     <span class="stat-label">Förra årets placering</span>
@@ -2426,7 +2466,7 @@ function populateProfiles() {
         profilesGrid.appendChild(playerCard);
     });
     
-    console.log('Profiles populated with', leagueData.players.length, 'cards');
+    console.log('Profiles populated with', participantsData.length, 'cards');
 }
 
 // Add player (admin function - commented out for regular users)
