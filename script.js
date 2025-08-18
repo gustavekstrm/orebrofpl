@@ -3,7 +3,7 @@ console.log('=== SCRIPT.JS LOADING ===');
 const CORRECT_PASSWORD = 'fantasyorebro';
 const ADMIN_PASSWORD = 'Pepsie10';
 // FPL API Configuration - Using Render Proxy
-const FPL_API_BASE = 'https://fantasy.premierleague.com/api';
+const FPL_API_BASE = 'https://orebrofpl.onrender.com/api'; // Render proxy URL
 const FPL_PROXY_BASE = 'https://orebrofpl.onrender.com/api'; // Render proxy URL
 
 // Always use proxy to avoid CORS issues
@@ -1968,7 +1968,7 @@ function addDataSourceIndicator() {
         indicator.style.background = '#f59e0b';
         indicator.style.color = '#000';
     } else {
-        indicator.textContent = '🌐 Live FPL Data';
+        indicator.textContent = '🌐 Live FPL Data (via Render Proxy)';
         indicator.style.background = '#10b981';
         indicator.style.color = '#fff';
     }
