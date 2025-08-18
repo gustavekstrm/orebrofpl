@@ -595,11 +595,11 @@ async function fetchParticipantFPLData(participant) {
     
     try {
         // Fetch current season data
-        const currentResponse = await fetch(`${FPL_API_BASE}/entry/${participant.fplId}/`);
+        const currentResponse = await fetch(`${FPL_PROXY_BASE}/entry/${participant.fplId}/`);
         const currentData = await currentResponse.json();
         
         // Fetch historical data
-        const historyResponse = await fetch(`${FPL_API_BASE}/entry/${participant.fplId}/history/`);
+        const historyResponse = await fetch(`${FPL_PROXY_BASE}/entry/${participant.fplId}/history/`);
         const historyData = await historyResponse.json();
         
         // Update participant with real data
@@ -2411,7 +2411,7 @@ async function fetchCaptainAndBenchData() {
     try {
         const captainPromises = leagueData.gameweekTable.map(async (player) => {
             try {
-                const response = await fetch(`${FPL_API_BASE}/entry/${player.managerId}/event/${currentGameweek}/picks/`);
+                const response = await fetch(`${FPL_PROXY_BASE}/entry/${player.managerId}/event/${currentGameweek}/picks/`);
                 const data = await response.json();
                 
                 // Find captain (multiplier = 2)
