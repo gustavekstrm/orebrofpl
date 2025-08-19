@@ -1885,11 +1885,11 @@ async function calculateWeeklyHighlightsFromAPI() {
     console.log(`📊 Calculating highlights for ${allParticipants.length} participants`);
     
     for (const participant of allParticipants) {
-        const picksData = await fetchGameweekPicks(participant.fplId, currentGW);
-        if (picksData) {
-            const gwPoints = picksData.entry_history.points;
-            const captain = picksData.picks.find(pick => pick.is_captain)?.element || null;
-            const benchPoints = picksData.picks.filter(pick => pick.position > 11).reduce((sum, pick) => sum + (pick.multiplier > 0 ? pick.points : 0), 0);
+                        const picksResult = await getPicksCached(participant.fplId, currentGW);
+        if (picksResult && picksResult.status === 'ok' && picksResult.data) {
+            const gwPoints = picksResult.data.entry_history.points;
+            const captain = picksResult.data.picks.find(pick => pick.is_captain)?.element || null;
+            const benchPoints = picksResult.data.picks.filter(pick => pick.position > 11).reduce((sum, pick) => sum + (pick.multiplier > 0 ? pick.points : 0), 0);
             
             // Update highlights
             if (gwPoints > gwHighlights.rocket.points) {
@@ -2071,16 +2071,16 @@ async function generateLeagueTablesFromAPI() {
     const gwData = [];
     
     for (const participant of allParticipants) {
-        const picksData = await fetchGameweekPicks(participant.fplId, currentGameweek);
-        if (picksData && picksData.entry_history) {
+        const picksResult = await getPicksCached(participant.fplId, currentGameweek);
+        if (picksResult && picksResult.status === 'ok' && picksResult.data && picksResult.data.entry_history) {
             gwData.push({
                 position: 0, // Will be calculated after sorting
                 name: participant.namn,
-                points: picksData.entry_history.points,
+                points: picksResult.data.entry_history.points,
                 gameweek: currentGameweek,
                 managerId: participant.fplId
             });
-            console.log(`✅ Added ${participant.namn} with ${picksData.entry_history.points} points`);
+            console.log(`✅ Added ${participant.namn} with ${picksResult.data.entry_history.points} points`);
         } else {
             console.log(`⚠️ No gameweek data for ${participant.namn} (GW${currentGameweek}) - using season total`);
             // Use season total points if gameweek data unavailable
@@ -3115,14 +3115,14 @@ async function generateRealRoasts() {
     const roastStats = [];
     
     for (const participant of allParticipants) {
-        const picksData = await fetchGameweekPicks(participant.fplId, currentGameweek);
-        if (picksData) {
-            const gwPoints = picksData.entry_history.points;
-            const captain = picksData.picks.find(pick => pick.is_captain);
+        const picksResult = await getPicksCached(participant.fplId, currentGameweek);
+        if (picksResult && picksResult.status === 'ok' && picksResult.data) {
+            const gwPoints = picksResult.data.entry_history.points;
+            const captain = picksResult.data.picks.find(pick => pick.is_captain);
             const captainPoints = captain ? captain.points * captain.multiplier : 0;
-            const benchPoints = picksData.picks.filter(pick => pick.position > 11).reduce((sum, pick) => sum + (pick.multiplier > 0 ? pick.points : 0), 0);
-            const transfers = picksData.entry_history.event_transfers;
-            const transferCost = picksData.entry_history.event_transfers_cost;
+            const benchPoints = picksResult.data.picks.filter(pick => pick.position > 11).reduce((sum, pick) => sum + (pick.multiplier > 0 ? pick.points : 0), 0);
+            const transfers = picksResult.data.entry_history.event_transfers;
+            const transferCost = picksResult.data.entry_history.event_transfers_cost;
             
             roastStats.push({
                 participant,
