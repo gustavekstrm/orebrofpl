@@ -24,15 +24,69 @@ const EAGER_FETCH_PICKS_FOR_TABLES = false; // DO NOT change design; just disabl
 // Debug flag for FPL API logging
 const DEBUG_FPL = false; // set true only when debugging
 
+// GW handling flexibility
+const FORCE_GW = null; // sätt till t.ex. 1 om du alltid vill visa GW1
+
 // --- Picks cache & in-flight deduper ---
 const PICKS_TTL_MS = 5 * 60 * 1000; // 5 min
 const picksCache = new Map(); // key -> { ts, status: 'ok'|'blocked'|'error', data?, history? }
 const picksInFlight = new Map(); // key -> Promise
+const PICKS_SS_KEY = 'fpl_picks_cache_v1';
 
 function picksKey(entryId, gw) { return `${entryId}:${gw}`; }
 
 function logPicksBlocked(entryId, err) {
   if (DEBUG_FPL) console.info(`Picks blocked for ${entryId}: ${err}`);
+}
+
+function markBlockedRow(rowEl, entryId) {
+  if (!rowEl) return;
+  rowEl.dataset.picksStatus = 'blocked';                 // ev. framtida logik
+  // Sätt bara title så användaren får en hover-hint, ingen layout påverkas
+  rowEl.title = `Picks är inte tillgängliga för ${entryId} (privat/403). Poäng visas från history.`;
+}
+
+function loadPicksCacheFromSession() {
+  try {
+    const raw = sessionStorage.getItem(PICKS_SS_KEY);
+    if (!raw) return;
+    const obj = JSON.parse(raw);
+    const now = Date.now();
+    for (const [key, rec] of Object.entries(obj)) {
+      if (now - rec.ts < PICKS_TTL_MS) picksCache.set(key, rec);
+    }
+  } catch {}
+}
+
+function savePicksCacheToSession() {
+  try {
+    const obj = {};
+    const now = Date.now();
+    for (const [key, rec] of picksCache.entries()) {
+      if (now - rec.ts < PICKS_TTL_MS) obj[key] = rec;
+    }
+    sessionStorage.setItem(PICKS_SS_KEY, JSON.stringify(obj));
+  } catch {}
+}
+
+// Load cache from session on startup
+loadPicksCacheFromSession();
+
+function onIdle(cb, timeout=1200) {
+  const rif = window.requestIdleCallback || ((fn) => setTimeout(fn, timeout));
+  rif(cb, { timeout });
+}
+
+function prefetchSomeDetails(entryIds, gw, max=4) {
+  const subset = entryIds.slice(0, max);
+  onIdle(async () => {
+    for (const id of subset) {
+      try {
+        await getPicksCached(id, gw);     // använder cache + fallback + throttling
+        await new Promise(r => setTimeout(r, 200 + Math.random()*300));
+      } catch {}
+    }
+  });
 }
 
 async function getPicksCached(entryId, gw) {
@@ -53,6 +107,7 @@ async function getPicksCached(entryId, gw) {
       const data = await fetchPicks(entryId, gw); // your existing retrying helper
       const rec = { ts: Date.now(), status: 'ok', data };
       picksCache.set(key, rec);
+      savePicksCacheToSession();
       return rec;
     } catch (e) {
       // Try history for points so UI can still render
@@ -60,6 +115,7 @@ async function getPicksCached(entryId, gw) {
       try { history = await fetchHistory(entryId); } catch {}
       const rec = { ts: Date.now(), status: 'blocked', history, error: String(e) };
       picksCache.set(key, rec);
+      savePicksCacheToSession();
       return rec;
     } finally {
       picksInFlight.delete(key);
@@ -1825,19 +1881,15 @@ async function initializeFPLData() {
         }
         
         // Determine current gameweek from bootstrap data
-        const current = bootstrap?.events?.find(e => e.is_current) || bootstrap?.events?.[0];
-        if (current) {
-            currentGameweek = current.id;
-            console.log(`✅ Current gameweek determined: ${currentGameweek}`);
-            
-            // Update UI labels if they exist
-            document.querySelector('#gwLabel')?.replaceChildren(document.createTextNode(`Gameweek ${current.id}`));
-            if (current.season_name) {
-                document.querySelector('#seasonLabel')?.replaceChildren(document.createTextNode(current.season_name));
-            }
-        } else {
-            currentGameweek = 1;
-            console.log(`⚠️ No gameweek data found, defaulting to GW1`);
+        const currentEvent = bootstrap?.events?.find(e => e.is_current);
+        const gw = FORCE_GW ?? currentEvent?.id ?? 1;
+        currentGameweek = gw;
+        console.log(`✅ Gameweek determined: ${currentGameweek} (forced: ${FORCE_GW !== null})`);
+        
+        // Update UI labels if they exist
+        document.querySelector('#gwLabel')?.replaceChildren(document.createTextNode(`Gameweek ${currentGameweek}`));
+        if (currentEvent?.season_name) {
+            document.querySelector('#seasonLabel')?.replaceChildren(document.createTextNode(currentEvent.season_name));
         }
         
         console.log(`📅 Available events:`, bootstrap.events.map(e => ({ id: e.id, name: e.name, finished: e.finished, is_current: e.is_current })));
@@ -1883,6 +1935,13 @@ async function initializeFPLData() {
             populateProfiles();
             updateHighlightsFromData();
             generateRoastMessages();
+            
+            // Idle prefetch of top 4 players for better UX
+            const entryIds = participantsData.filter(p => p.fplId).map(p => p.fplId);
+            if (entryIds.length > 0) {
+                console.log('🔄 Scheduling idle prefetch of top 4 players...');
+                prefetchSomeDetails(entryIds, currentGameweek, 4);
+            }
         }, 100);
         
     } catch (error) {
@@ -2510,11 +2569,17 @@ function populateSeasonTable() {
         console.log(`Creating row ${index + 1} for player:`, player);
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td>${player.position}</td>
-            <td>${player.name}</td>
-            <td>${player.points}</td>
-            <td>${player.gameweek}</td>
+            <td>${index + 1}</td>
+            <td>${player.namn}</td>
+            <td>${player.totalPoäng}</td>
+            <td>${player.favoritlag}</td>
         `;
+        
+        // Add tooltip for blocked teams
+        if (player.privateOrBlocked && player.fplId) {
+            markBlockedRow(row, player.fplId);
+        }
+        
         tbody.appendChild(row);
     });
     
@@ -2546,11 +2611,17 @@ function populateGameweekTable() {
         console.log(`Creating GW row ${index + 1} for player:`, player);
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td>${player.position}</td>
-            <td>${player.name}</td>
-            <td>${player.points}</td>
-            <td>${player.gameweek}</td>
+            <td>${index + 1}</td>
+            <td>${player.namn}</td>
+            <td>${player.gameweekPoints || 0}</td>
+            <td>${player.favoritlag}</td>
         `;
+        
+        // Add tooltip for blocked teams
+        if (player.privateOrBlocked && player.fplId) {
+            markBlockedRow(row, player.fplId);
+        }
+        
         tbody.appendChild(row);
     });
     
