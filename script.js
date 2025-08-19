@@ -13,6 +13,11 @@ const LEAGUE_CODE = '46mnf2';
 // Global flag to disable API calls for local development
 const DISABLE_API_CALLS = false; // API enabled for deployment // Set to true for local development due to CORS, false when deployed
 
+// Throttling knobs (tweak here if FPL tightens WAF)
+const PICKS_CONCURRENCY = 4;           // set to 3 or 2 if you still see 403 spikes
+const PICKS_PACING_MIN_MS = 120;        // increase to 200 if needed
+const PICKS_PACING_MAX_MS = 240;        // increase to 400 if needed
+
 // --- Retry helper with backoff + jitter ---
 async function fetchWithRetry(url, init = {}, tries = 3, baseDelayMs = 700) {
   let lastErr;
@@ -31,7 +36,7 @@ async function fetchWithRetry(url, init = {}, tries = 3, baseDelayMs = 700) {
 }
 
 // --- Small worker pool to limit parallel requests ---
-async function mapPool(items, mapper, concurrency = 4) {
+async function mapPool(items, mapper, concurrency = PICKS_CONCURRENCY) {
   const out = new Array(items.length);
   let idx = 0;
   async function worker() {
@@ -40,8 +45,9 @@ async function mapPool(items, mapper, concurrency = 4) {
       if (i >= items.length) break;
       try { out[i] = await mapper(items[i], i); }
       catch (e) { out[i] = { error: e }; }
-      // tiny pacing between requests
-      await new Promise(r => setTimeout(r, 120 + Math.floor(Math.random() * 120)));
+      // pacing between requests
+      const delay = Math.floor(Math.random() * (PICKS_PACING_MAX_MS - PICKS_PACING_MIN_MS + 1)) + PICKS_PACING_MIN_MS;
+      await new Promise(r => setTimeout(r, delay));
     }
   }
   await Promise.all(Array.from({ length: concurrency }, worker));
@@ -1390,7 +1396,7 @@ async function loadAllPicksWithFallback(entryIds, gw) {
             }
             return { id, picks: null, history, privateOrBlocked: true, error: String(e) };
         }
-    }, 4); // <= reduce to 3 if you still see many 403s
+    }, PICKS_CONCURRENCY); // <= reduce to 3 if you still see many 403s
 }
 
 async function processPicksResults(results, bootstrap) {
