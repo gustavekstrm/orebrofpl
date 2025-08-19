@@ -1616,7 +1616,7 @@ async function initializeFPLData() {
         console.log('👥 Final participantsData:', participantsData);
         
         // Update data source indicator
-        updateDataSourceIndicator('🌐 Live FPL Data (via Render)', '#10b981', '#fff');
+        updateDataSourceIndicator('🌐 Live FPL Data (via Render Proxy)', '#10b981', '#000');
         
         // Populate UI with real data
         setTimeout(() => {
