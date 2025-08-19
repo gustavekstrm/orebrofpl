@@ -13,6 +13,41 @@ const LEAGUE_CODE = '46mnf2';
 // Global flag to disable API calls for local development
 const DISABLE_API_CALLS = false; // API enabled for deployment // Set to true for local development due to CORS, false when deployed
 
+// --- Retry helper with backoff + jitter ---
+async function fetchWithRetry(url, init = {}, tries = 3, baseDelayMs = 700) {
+  let lastErr;
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetch(url, init);
+      if (res.ok) return res;
+      lastErr = new Error(`HTTP error! status: ${res.status}`);
+    } catch (e) {
+      lastErr = e;
+    }
+    const jitter = Math.floor(Math.random() * 300);
+    await new Promise(r => setTimeout(r, baseDelayMs * (i + 1) + jitter));
+  }
+  throw lastErr;
+}
+
+// --- Small worker pool to limit parallel requests ---
+async function mapPool(items, mapper, concurrency = 4) {
+  const out = new Array(items.length);
+  let idx = 0;
+  async function worker() {
+    for (;;) {
+      const i = idx++;
+      if (i >= items.length) break;
+      try { out[i] = await mapper(items[i], i); }
+      catch (e) { out[i] = { error: e }; }
+      // tiny pacing between requests
+      await new Promise(r => setTimeout(r, 120 + Math.floor(Math.random() * 120)));
+    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, worker));
+  return out;
+}
+
 // Global data storage
 let isLoggedIn = false;
 let isAdminAuthenticated = false;
@@ -1294,18 +1329,8 @@ document.addEventListener('DOMContentLoaded', function() {
 // FPL API Integration Functions
 async function fetchBootstrapData() {
     try {
-        const apiUrl = `${FPL_PROXY_BASE}/bootstrap-static/`;
         console.log('🔄 Fetching bootstrap data from FPL API via Render proxy...');
-        console.log('📡 API URL:', apiUrl);
-        
-        const response = await fetch(apiUrl);
-        console.log('📡 Response status:', response.status);
-        console.log('📡 Response ok:', response.ok);
-        
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        
+        const response = await fetchWithRetry(`${FPL_PROXY_BASE}/bootstrap-static/`);
         const data = await response.json();
         console.log('✅ Bootstrap data fetched successfully!');
         console.log('📊 Data structure:', {
@@ -1318,23 +1343,163 @@ async function fetchBootstrapData() {
         return data;
     } catch (error) {
         console.error('❌ Error fetching bootstrap data:', error);
-        console.error('❌ Error details:', {
-            message: error.message,
-            stack: error.stack,
-            type: error.name
+        throw error;
+    }
+}
+
+async function fetchHistory(entryId) {
+    try {
+        console.log(`🔄 Fetching history data for FPL ID: ${entryId}`);
+        const response = await fetchWithRetry(`${FPL_PROXY_BASE}/entry/${entryId}/history/`);
+        const data = await response.json();
+        console.log(`✅ History data fetched successfully for FPL ID ${entryId}`);
+        return data;
+    } catch (error) {
+        console.error(`❌ Error fetching history for FPL ID ${entryId}:`, error);
+        return null;
+    }
+}
+
+async function fetchPicks(entryId, gw) {
+    try {
+        console.log(`🔄 Fetching GW${gw} picks for FPL ID: ${entryId}`);
+        const response = await fetchWithRetry(`${FPL_PROXY_BASE}/entry/${entryId}/event/${gw}/picks/?_=${Date.now()}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        console.log(`✅ Picks data fetched successfully for FPL ID ${entryId}, GW${gw}`);
+        return data;
+    } catch (error) {
+        console.error(`❌ Error fetching picks for FPL ID ${entryId}, GW${gw}:`, error);
+        throw error;
+    }
+}
+
+async function loadAllPicksWithFallback(entryIds, gw) {
+    console.log(`🔄 Loading picks for ${entryIds.length} entries with fallback to history...`);
+    return mapPool(entryIds, async (id) => {
+        try {
+            const picks = await fetchPicks(id, gw);
+            return { id, picks, history: null, privateOrBlocked: false };
+        } catch (e) {
+            console.log(`⚠️ Picks failed for FPL ID ${id}, falling back to history...`);
+            let history = null;
+            try { 
+                history = await fetchHistory(id); 
+            } catch (historyError) {
+                console.log(`❌ History also failed for FPL ID ${id}:`, historyError);
+            }
+            return { id, picks: null, history, privateOrBlocked: true, error: String(e) };
+        }
+    }, 4); // <= reduce to 3 if you still see many 403s
+}
+
+async function processPicksResults(results, bootstrap) {
+    console.log('🔄 Processing picks results and updating league data...');
+    
+    // Initialize league data structures
+    leagueData.seasonTable = [];
+    leagueData.gameweekTable = [];
+    leagueData.highlights = {
+        rocket: '',
+        flop: '',
+        captain: '',
+        bench: ''
+    };
+    
+    // Process each result
+    for (const result of results) {
+        const participant = participantsData.find(p => p.fplId === result.id);
+        if (!participant) continue;
+        
+        let gameweekPoints = 0;
+        let captainPoints = 0;
+        let benchPoints = 0;
+        let transfers = 0;
+        
+        if (result.picks && !result.privateOrBlocked) {
+            // Use picks data for full details
+            const picks = result.picks;
+            gameweekPoints = picks.entry_history?.points || 0;
+            captainPoints = picks.entry_history?.points_on_bench || 0; // This might need adjustment
+            benchPoints = picks.entry_history?.points_on_bench || 0;
+            transfers = picks.entry_history?.event_transfers || 0;
+            
+            // Update participant with real data
+            participant.gameweekPoints = gameweekPoints;
+            participant.captainPoints = captainPoints;
+            participant.benchPoints = benchPoints;
+            participant.transfers = transfers;
+            participant.privateOrBlocked = false;
+            
+        } else if (result.history && result.privateOrBlocked) {
+            // Use history data for points only (no captain/bench details)
+            const historyEntry = result.history.current?.find(h => h.event === currentGameweek);
+            if (historyEntry) {
+                gameweekPoints = historyEntry.points || 0;
+                participant.gameweekPoints = gameweekPoints;
+                participant.privateOrBlocked = true;
+                console.log(`📊 Using history data for FPL ID ${result.id}: ${gameweekPoints} points`);
+            }
+        }
+        
+        // Add to league tables
+        leagueData.seasonTable.push({
+            namn: participant.namn,
+            totalPoäng: participant.totalPoäng,
+            favoritlag: participant.favoritlag,
+            fplId: participant.fplId,
+            image: participant.image,
+            privateOrBlocked: participant.privateOrBlocked || false
         });
         
-        // Check for specific error types
-        if (error.message.includes('CORS') || error.message.includes('Access-Control-Allow-Origin')) {
-            console.log('⚠️ CORS error detected in bootstrap fetch');
-            throw new Error('CORS policy blocks API calls from public hosting');
-        } else if (error.message.includes('Failed to fetch')) {
-            console.log('⚠️ Network error detected in bootstrap fetch');
-            throw new Error('Network error - FPL API may be temporarily unavailable');
-        } else {
-            throw error;
+        leagueData.gameweekTable.push({
+            namn: participant.namn,
+            gameweekPoints: gameweekPoints,
+            captainPoints: captainPoints,
+            benchPoints: benchPoints,
+            transfers: transfers,
+            favoritlag: participant.favoritlag,
+            fplId: participant.fplId,
+            image: participant.image,
+            privateOrBlocked: participant.privateOrBlocked || false
+        });
+    }
+    
+    // Sort tables
+    leagueData.seasonTable.sort((a, b) => b.totalPoäng - a.totalPoäng);
+    leagueData.gameweekTable.sort((a, b) => b.gameweekPoints - a.gameweekPoints);
+    
+    // Calculate highlights
+    const validGameweekEntries = leagueData.gameweekTable.filter(entry => !entry.privateOrBlocked);
+    
+    if (validGameweekEntries.length > 0) {
+        // Weekly rocket (highest points)
+        const rocket = validGameweekEntries[0];
+        leagueData.highlights.rocket = `${rocket.namn} (${rocket.gameweekPoints}p)`;
+        
+        // Weekly flop (lowest points)
+        const flop = validGameweekEntries[validGameweekEntries.length - 1];
+        leagueData.highlights.flop = `${flop.namn} (${flop.gameweekPoints}p)`;
+        
+        // Captain fail (lowest captain points)
+        const captainFail = validGameweekEntries
+            .filter(entry => entry.captainPoints !== undefined)
+            .sort((a, b) => a.captainPoints - b.captainPoints)[0];
+        if (captainFail) {
+            leagueData.highlights.captain = `${captainFail.namn} (${captainFail.captainPoints}p)`;
+        }
+        
+        // Bench boost fail (highest bench points)
+        const benchFail = validGameweekEntries
+            .filter(entry => entry.benchPoints !== undefined)
+            .sort((a, b) => b.benchPoints - a.benchPoints)[0];
+        if (benchFail) {
+            leagueData.highlights.bench = `${benchFail.namn} (${benchFail.benchPoints}p)`;
         }
     }
+    
+    console.log('✅ Picks results processed successfully!');
+    console.log('📊 Highlights:', leagueData.highlights);
 }
 
 async function fetchPlayerData(fplId) {
@@ -1545,9 +1710,9 @@ async function calculateWeeklyHighlightsFromAPI() {
     console.log('✅ Weekly highlights calculated from API:', leagueData.highlights);
 }
 
-// Initialize FPL data - API-Only Mode
+// Initialize FPL data - API-Only Mode with Throttling
 async function initializeFPLData() {
-    console.log('=== INITIALIZING FPL DATA (API-ONLY MODE) ===');
+    console.log('=== INITIALIZING FPL DATA (API-ONLY MODE WITH THROTTLING) ===');
     console.log('DISABLE_API_CALLS:', DISABLE_API_CALLS);
     
     if (DISABLE_API_CALLS) {
@@ -1557,61 +1722,62 @@ async function initializeFPLData() {
         return;
     }
     
-    console.log('✅ API-ONLY MODE: Fetching real data from FPL API...');
+    console.log('✅ API-ONLY MODE: Fetching real data from FPL API with throttling...');
     
     try {
         // Step 1: Fetch bootstrap data and determine current gameweek
         console.log('🔄 Step 1: Fetching bootstrap data...');
-        const bootstrapData = await fetchBootstrapData();
-        if (!bootstrapData) {
+        const bootstrap = await fetchBootstrapData();
+        if (!bootstrap) {
             throw new Error('Failed to fetch bootstrap data from FPL API');
         }
         
         // Determine current gameweek from bootstrap data
-        const currentEvent = bootstrapData.events.find(event => event.is_current);
-        if (currentEvent) {
-            currentGameweek = currentEvent.id;
+        const current = bootstrap?.events?.find(e => e.is_current) || bootstrap?.events?.[0];
+        if (current) {
+            currentGameweek = current.id;
             console.log(`✅ Current gameweek determined: ${currentGameweek}`);
-        } else {
-            // Check for the next upcoming gameweek
-            const nextEvent = bootstrapData.events.find(event => !event.finished);
-            if (nextEvent) {
-                currentGameweek = nextEvent.id;
-                console.log(`✅ Next upcoming gameweek: ${currentGameweek}`);
-            } else {
-                // Fallback to latest finished gameweek
-                const latestEvent = bootstrapData.events
-                    .filter(event => event.finished)
-                    .sort((a, b) => b.id - a.id)[0];
-                if (latestEvent) {
-                    currentGameweek = latestEvent.id;
-                    console.log(`✅ Using latest finished gameweek: ${currentGameweek}`);
-                } else {
-                    currentGameweek = 1;
-                    console.log(`⚠️ No gameweek data found, defaulting to GW1`);
-                }
+            
+            // Update UI labels if they exist
+            document.querySelector('#gwLabel')?.replaceChildren(document.createTextNode(`Gameweek ${current.id}`));
+            if (current.season_name) {
+                document.querySelector('#seasonLabel')?.replaceChildren(document.createTextNode(current.season_name));
             }
+        } else {
+            currentGameweek = 1;
+            console.log(`⚠️ No gameweek data found, defaulting to GW1`);
         }
         
-        console.log(`📅 Available events:`, bootstrapData.events.map(e => ({ id: e.id, name: e.name, finished: e.finished, is_current: e.is_current })));
+        console.log(`📅 Available events:`, bootstrap.events.map(e => ({ id: e.id, name: e.name, finished: e.finished, is_current: e.is_current })));
+        
+        // Wake the proxy (helps cold starts)
+        console.log('🔄 Waking up the proxy...');
+        try {
+            await fetchWithRetry('https://fpl-proxy-1.onrender.com/healthz');
+        } catch (e) {
+            console.log('⚠️ Proxy health check failed, continuing anyway...');
+        }
         
         // Step 2: Update all participants with real FPL data
         console.log('🔄 Step 2: Updating all participants with real FPL data...');
         await updateParticipantsWithFPLData();
         
-        // Step 3: Generate league tables from real data
-        console.log('🔄 Step 3: Generating league tables from real data...');
-        await generateLeagueTablesFromAPI();
+        // Step 3: Batch load picks with fallback to history
+        console.log('🔄 Step 3: Batch loading picks with fallback to history...');
+        const entryIds = participantsData.filter(p => p.fplId).map(p => p.fplId);
+        console.log(`📊 Loading data for ${entryIds.length} participants...`);
         
-        // Step 4: Calculate weekly highlights from real data
-        console.log('🔄 Step 4: Calculating weekly highlights from real data...');
-        await calculateWeeklyHighlightsFromAPI();
+        const results = await loadAllPicksWithFallback(entryIds, currentGameweek);
+        
+        // Step 4: Process results and update league data
+        console.log('🔄 Step 4: Processing results and updating league data...');
+        await processPicksResults(results, bootstrap);
         
         // Step 5: Generate roasts from real data
         console.log('🔄 Step 5: Generating roasts from real data...');
         await generateRealRoasts();
         
-        console.log('✅ FPL API data loaded successfully!');
+        console.log('✅ FPL API data loaded successfully with throttling!');
         console.log('📊 Final leagueData:', leagueData);
         console.log('👥 Final participantsData:', participantsData);
         
