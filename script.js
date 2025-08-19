@@ -27,6 +27,45 @@ const DEBUG_FPL = false; // set true only when debugging
 // GW handling flexibility
 const FORCE_GW = null; // sätt till t.ex. 1 om du alltid vill visa GW1
 
+// ---- Circuit Breaker for /picks ----
+const PICKS_CIRCUIT = {
+  WINDOW_MS: 30_000,     // sliding window to count failures
+  THRESHOLD: 8,          // trip after 8 failures within window
+  COOLDOWN_MS: 120_000,  // keep circuit open for 2 minutes
+  windowStart: 0,
+  failCount: 0,
+  openUntil: 0
+};
+
+function picksCircuitIsOpen() {
+  return Date.now() < PICKS_CIRCUIT.openUntil;
+}
+
+function recordPicksFailure() {
+  const now = Date.now();
+  if (now - PICKS_CIRCUIT.windowStart > PICKS_CIRCUIT.WINDOW_MS) {
+    PICKS_CIRCUIT.windowStart = now;
+    PICKS_CIRCUIT.failCount = 1;
+  } else {
+    PICKS_CIRCUIT.failCount++;
+  }
+  if (PICKS_CIRCUIT.failCount >= PICKS_CIRCUIT.THRESHOLD) {
+    PICKS_CIRCUIT.openUntil = now + PICKS_CIRCUIT.COOLDOWN_MS;
+    // reset window for the next period
+    PICKS_CIRCUIT.windowStart = now;
+    PICKS_CIRCUIT.failCount = 0;
+    if (typeof DEBUG_FPL !== 'undefined' && DEBUG_FPL) {
+      console.info(`[PICKS] Circuit OPEN for ${PICKS_CIRCUIT.COOLDOWN_MS/1000}s`);
+    }
+  }
+}
+
+function recordPicksSuccess() {
+  // on success, gently recover by clearing counters
+  PICKS_CIRCUIT.windowStart = Date.now();
+  PICKS_CIRCUIT.failCount = 0;
+}
+
 // --- Picks cache & in-flight deduper ---
 const PICKS_TTL_MS = 5 * 60 * 1000; // 5 min
 const picksCache = new Map(); // key -> { ts, status: 'ok'|'blocked'|'error', data?, history? }
@@ -110,7 +149,14 @@ async function getPicksCached(entryId, gw) {
       savePicksCacheToSession();
       return rec;
     } catch (e) {
-      // Try history for points so UI can still render
+      // Circuit open or real 403/429/5xx → graceful fallback to history
+      if (typeof DEBUG_FPL !== 'undefined' && DEBUG_FPL) {
+        if (e?.code === 'CIRCUIT_OPEN') {
+          console.info(`[PICKS] Circuit open, using history for ${entryId} GW${gw}`);
+        } else {
+          console.info(`[PICKS] Fallback to history for ${entryId} GW${gw}: ${String(e)}`);
+        }
+      }
       let history = null;
       try { history = await fetchHistory(entryId); } catch {}
       const rec = { ts: Date.now(), status: 'blocked', history, error: String(e) };
@@ -1486,14 +1532,33 @@ async function fetchHistory(entryId) {
 }
 
 async function fetchPicks(entryId, gw) {
+    if (picksCircuitIsOpen()) {
+        const err = new Error('CIRCUIT_OPEN');
+        err.code = 'CIRCUIT_OPEN';
+        throw err; // force fallback to /history/
+    }
+
     try {
         console.log(`🔄 Fetching GW${gw} picks for FPL ID: ${entryId}`);
         const response = await fetchWithRetry(`${FPL_PROXY_BASE}/entry/${entryId}/event/${gw}/picks/?_=${Date.now()}`);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        if (!response.ok) {
+            // Count only 403/429/5xx as "circuit-worthy" failures
+            if (response.status === 403 || response.status === 429 || response.status >= 500) {
+                recordPicksFailure();
+            }
+            throw new Error(`HTTP ${response.status}`);
+        }
+
         const data = await response.json();
+        recordPicksSuccess();
         console.log(`✅ Picks data fetched successfully for FPL ID ${entryId}, GW${gw}`);
         return data;
     } catch (error) {
+        // treat parse error as failure, unlikely but safe
+        if (error.code !== 'CIRCUIT_OPEN') {
+            recordPicksFailure();
+        }
         console.error(`❌ Error fetching picks for FPL ID ${entryId}, GW${gw}:`, error);
         throw error;
     }
