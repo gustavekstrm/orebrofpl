@@ -1195,8 +1195,8 @@ window.showPrizeTotalInput = showPrizeTotalInput;
 window.hidePrizeTotalInput = hidePrizeTotalInput;
 window.hideAdminPrizeInput = hideAdminPrizeInput;
 window.updatePrizeTotal = updatePrizeTotal;
-window.showAllParticipants = showAllParticipants;
-window.removeParticipant = removeParticipant;
+// showAllParticipants function removed - not needed
+// removeParticipant function removed - not needed
 window.testButton = testButton;
 
 // Alternative admin access function (for debugging)
@@ -2554,17 +2554,28 @@ let loadingTables = false;
 
 // Navigation functions
 function showSection(sectionName) {
+    // Guard against invalid input
+    if (!sectionName) return;
+    
     // Hide all sections
     const sections = document.querySelectorAll('.section');
     sections.forEach(section => section.classList.remove('active'));
     
     // Show selected section
-    document.getElementById(sectionName).classList.add('active');
+    const targetSection = document.getElementById(sectionName);
+    if (targetSection) {
+        targetSection.classList.add('active');
+    }
     
     // Update navigation buttons
     const navButtons = document.querySelectorAll('.nav-btn');
     navButtons.forEach(btn => btn.classList.remove('active'));
-    event.target.classList.add('active');
+    
+    // Find and activate the correct button (safer than event.target)
+    const activeButton = document.querySelector(`[onclick*="showSection('${sectionName}')"]`);
+    if (activeButton) {
+        activeButton.classList.add('active');
+    }
     
     // Handle tables section - prevent duplicate loading
     if (sectionName === 'tables') {
@@ -2590,17 +2601,28 @@ function showSection(sectionName) {
 }
 
 function showTable(tableType) {
+    // Guard against invalid input
+    if (!tableType) return;
+    
     // Hide all table containers
     const tableContainers = document.querySelectorAll('.table-container');
     tableContainers.forEach(container => container.classList.remove('active'));
     
     // Show selected table
-    document.getElementById(tableType + 'Table').classList.add('active');
+    const targetTable = document.getElementById(tableType + 'Table');
+    if (targetTable) {
+        targetTable.classList.add('active');
+    }
     
     // Update tab buttons
     const tabButtons = document.querySelectorAll('.tab-btn');
     tabButtons.forEach(btn => btn.classList.remove('active'));
-    event.target.classList.add('active');
+    
+    // Find and activate the correct button (safer than event.target)
+    const activeButton = document.querySelector(`[onclick*="showTable('${tableType}')"]`);
+    if (activeButton) {
+        activeButton.classList.add('active');
+    }
 }
 
 // Populate tables with data
@@ -3406,7 +3428,7 @@ setInterval(() => {
 window.checkPassword = checkPassword;
 window.showSection = showSection;
 window.showTable = showTable;
-window.logout = logout;
+// logout function removed - not needed
 window.copyLeagueCode = copyLeagueCode;
 window.toggleRoasts = toggleRoasts;
 
