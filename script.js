@@ -14,9 +14,72 @@ const LEAGUE_CODE = '46mnf2';
 const DISABLE_API_CALLS = false; // API enabled for deployment // Set to true for local development due to CORS, false when deployed
 
 // Throttling knobs (tweak here if FPL tightens WAF)
-const PICKS_CONCURRENCY = 4;           // set to 3 or 2 if you still see 403 spikes
-const PICKS_PACING_MIN_MS = 120;        // increase to 200 if needed
-const PICKS_PACING_MAX_MS = 240;        // increase to 400 if needed
+const PICKS_CONCURRENCY = 3;           // was 4 - tightened for interactive routes
+const PICKS_PACING_MIN_MS = 200;        // was 120 - increased for less pressure
+const PICKS_PACING_MAX_MS = 400;        // was 240 - increased for less pressure
+
+// Tables must not fetch /picks/ - hard switch
+const EAGER_FETCH_PICKS_FOR_TABLES = false; // DO NOT change design; just disable picks for tables
+
+// Debug flag for FPL API logging
+const DEBUG_FPL = false; // set true only when debugging
+
+// --- Picks cache & in-flight deduper ---
+const PICKS_TTL_MS = 5 * 60 * 1000; // 5 min
+const picksCache = new Map(); // key -> { ts, status: 'ok'|'blocked'|'error', data?, history? }
+const picksInFlight = new Map(); // key -> Promise
+
+function picksKey(entryId, gw) { return `${entryId}:${gw}`; }
+
+function logPicksBlocked(entryId, err) {
+  if (DEBUG_FPL) console.info(`Picks blocked for ${entryId}: ${err}`);
+}
+
+async function getPicksCached(entryId, gw) {
+  const key = picksKey(entryId, gw);
+  const now = Date.now();
+
+  // Serve fresh cache
+  const cached = picksCache.get(key);
+  if (cached && (now - cached.ts) < PICKS_TTL_MS) return cached;
+
+  // Coalesce concurrent callers
+  const inflight = picksInFlight.get(key);
+  if (inflight) return inflight;
+
+  // Actual fetch with fallback to /history/
+  const p = (async () => {
+    try {
+      const data = await fetchPicks(entryId, gw); // your existing retrying helper
+      const rec = { ts: Date.now(), status: 'ok', data };
+      picksCache.set(key, rec);
+      return rec;
+    } catch (e) {
+      // Try history for points so UI can still render
+      let history = null;
+      try { history = await fetchHistory(entryId); } catch {}
+      const rec = { ts: Date.now(), status: 'blocked', history, error: String(e) };
+      picksCache.set(key, rec);
+      return rec;
+    } finally {
+      picksInFlight.delete(key);
+    }
+  })();
+
+  picksInFlight.set(key, p);
+  return p;
+}
+
+async function ensurePicksForDetail(entryId, gw) {
+  const rec = await getPicksCached(entryId, gw);
+  if (rec.status === 'ok') {
+    // render captain/bench/formation from rec.data
+    return { success: true, data: rec.data };
+  } else {
+    // render points from rec.history (if available), and show "—" for captain/bench
+    return { success: false, history: rec.history, error: rec.error };
+  }
+}
 
 // --- Retry helper with backoff + jitter ---
 async function fetchWithRetry(url, init = {}, tries = 3, baseDelayMs = 700) {
@@ -1381,13 +1444,30 @@ async function fetchPicks(entryId, gw) {
 }
 
 async function loadAllPicksWithFallback(entryIds, gw) {
-    console.log(`🔄 Loading picks for ${entryIds.length} entries with fallback to history...`);
+    console.log(`🔄 Loading data for ${entryIds.length} entries...`);
+    
+    // If tables are disabled from fetching picks, only fetch history
+    if (!EAGER_FETCH_PICKS_FOR_TABLES) {
+        console.log('📊 Tables mode: fetching history only (no picks)...');
+        return mapPool(entryIds, async (id) => {
+            try {
+                const history = await fetchHistory(id);
+                return { id, picks: null, history, privateOrBlocked: false };
+            } catch (e) {
+                logPicksBlocked(id, e);
+                return { id, picks: null, history: null, privateOrBlocked: true, error: String(e) };
+            }
+        }, PICKS_CONCURRENCY);
+    }
+    
+    // Full picks + fallback mode (for highlights/details)
+    console.log('🔄 Full mode: loading picks with fallback to history...');
     return mapPool(entryIds, async (id) => {
         try {
             const picks = await fetchPicks(id, gw);
             return { id, picks, history: null, privateOrBlocked: false };
         } catch (e) {
-            console.log(`⚠️ Picks failed for FPL ID ${id}, falling back to history...`);
+            logPicksBlocked(id, e);
             let history = null;
             try { 
                 history = await fetchHistory(id); 
@@ -1396,7 +1476,7 @@ async function loadAllPicksWithFallback(entryIds, gw) {
             }
             return { id, picks: null, history, privateOrBlocked: true, error: String(e) };
         }
-    }, PICKS_CONCURRENCY); // <= reduce to 3 if you still see many 403s
+    }, PICKS_CONCURRENCY);
 }
 
 async function processPicksResults(results, bootstrap) {
@@ -1437,13 +1517,13 @@ async function processPicksResults(results, bootstrap) {
             participant.transfers = transfers;
             participant.privateOrBlocked = false;
             
-        } else if (result.history && result.privateOrBlocked) {
+        } else if (result.history) {
             // Use history data for points only (no captain/bench details)
             const historyEntry = result.history.current?.find(h => h.event === currentGameweek);
             if (historyEntry) {
                 gameweekPoints = historyEntry.points || 0;
                 participant.gameweekPoints = gameweekPoints;
-                participant.privateOrBlocked = true;
+                participant.privateOrBlocked = result.privateOrBlocked || false;
                 console.log(`📊 Using history data for FPL ID ${result.id}: ${gameweekPoints} points`);
             }
         }
@@ -1487,20 +1567,26 @@ async function processPicksResults(results, bootstrap) {
         const flop = validGameweekEntries[validGameweekEntries.length - 1];
         leagueData.highlights.flop = `${flop.namn} (${flop.gameweekPoints}p)`;
         
-        // Captain fail (lowest captain points)
-        const captainFail = validGameweekEntries
-            .filter(entry => entry.captainPoints !== undefined)
-            .sort((a, b) => a.captainPoints - b.captainPoints)[0];
-        if (captainFail) {
-            leagueData.highlights.captain = `${captainFail.namn} (${captainFail.captainPoints}p)`;
-        }
-        
-        // Bench boost fail (highest bench points)
-        const benchFail = validGameweekEntries
-            .filter(entry => entry.benchPoints !== undefined)
-            .sort((a, b) => b.benchPoints - a.benchPoints)[0];
-        if (benchFail) {
-            leagueData.highlights.bench = `${benchFail.namn} (${benchFail.benchPoints}p)`;
+        // Captain fail (lowest captain points) - only if picks data available
+        if (EAGER_FETCH_PICKS_FOR_TABLES) {
+            const captainFail = validGameweekEntries
+                .filter(entry => entry.captainPoints !== undefined && entry.captainPoints > 0)
+                .sort((a, b) => a.captainPoints - b.captainPoints)[0];
+            if (captainFail) {
+                leagueData.highlights.captain = `${captainFail.namn} (${captainFail.captainPoints}p)`;
+            }
+            
+            // Bench boost fail (highest bench points) - only if picks data available
+            const benchFail = validGameweekEntries
+                .filter(entry => entry.benchPoints !== undefined && entry.benchPoints > 0)
+                .sort((a, b) => b.benchPoints - a.benchPoints)[0];
+            if (benchFail) {
+                leagueData.highlights.bench = `${benchFail.namn} (${benchFail.benchPoints}p)`;
+            }
+        } else {
+            // Tables mode - leave captain/bench empty
+            leagueData.highlights.captain = '';
+            leagueData.highlights.bench = '';
         }
     }
     
@@ -2339,6 +2425,9 @@ function setupEventListeners() {
     console.log('Event listeners set up successfully');
 }
 
+// Loading state guards
+let loadingTables = false;
+
 // Navigation functions
 function showSection(sectionName) {
     // Hide all sections
@@ -2353,7 +2442,17 @@ function showSection(sectionName) {
     navButtons.forEach(btn => btn.classList.remove('active'));
     event.target.classList.add('active');
     
-
+    // Handle tables section - prevent duplicate loading
+    if (sectionName === 'tables') {
+        if (loadingTables) return; // prevent duplicate run
+        loadingTables = true;
+        try {
+            console.log('Tables section shown, populating tables (history only)...');
+            populateTables(); // uses only /history/ + league standings
+        } finally {
+            loadingTables = false;
+        }
+    }
     
     // Generate roast messages when highlights section is shown
     if (sectionName === 'highlights') {
