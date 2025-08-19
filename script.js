@@ -2,9 +2,9 @@
 console.log('=== SCRIPT.JS LOADING ===');
 const CORRECT_PASSWORD = 'fantasyorebro';
 const ADMIN_PASSWORD = 'Pepsie10';
-// FPL API Configuration - Using Render Proxy
-const FPL_API_BASE = 'https://orebrofpl.onrender.com/api'; // Render proxy URL
-const FPL_PROXY_BASE = 'https://orebrofpl.onrender.com/api'; // Render proxy URL
+// FPL API Configuration - Using Render Proxy (LIVE)
+const FPL_API_BASE = 'https://fpl-proxy-1.onrender.com/api';
+const FPL_PROXY_BASE = FPL_API_BASE;
 
 // Always use proxy to avoid CORS issues
 const USE_PROXY = true;

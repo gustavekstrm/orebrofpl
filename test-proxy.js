@@ -20,7 +20,7 @@ const testProxy = async () => {
             console.log(`✅ Direct API: ${directResponse.status}`);
             
             // Test proxy (replace with your actual proxy URL)
-            const proxyUrl = 'https://fpl-proxy.your-username.workers.dev'; // Replace with actual URL
+            const proxyUrl = 'https://fpl-proxy-1.onrender.com'; // Replace with actual URL
             const proxyResponse = await fetch(`${proxyUrl}${endpoint}`);
             console.log(`✅ Proxy API: ${proxyResponse.status}`);
             
