@@ -6,6 +6,27 @@ const ADMIN_PASSWORD = 'Pepsie10';
 const FPL_API_BASE = 'https://fpl-proxy-1.onrender.com/api';
 const FPL_PROXY_BASE = FPL_API_BASE;
 
+// Global variables for aggregate endpoints
+window.LEAGUE_CODE = '46mnf2';
+window.ENTRY_IDS = []; // Will be populated from participantsData
+
+// Single source of truth for Entry IDs
+function getKnownEntryIds() {
+  const a = [];
+  if (Array.isArray(window.ENTRY_IDS)) a.push(...window.ENTRY_IDS);
+  if (Array.isArray(window.participantsData)) {
+    for (const p of window.participantsData) if (p?.fplId) a.push(p.fplId);
+  }
+  // dedupe + numeric
+  return Array.from(new Set(a.map(n => Number(n)).filter(Boolean)));
+}
+
+// Helper function to update ENTRY_IDS from participantsData
+function updateEntryIds() {
+    window.ENTRY_IDS = participantsData.filter(p => p.fplId).map(p => p.fplId);
+    console.log('Updated ENTRY_IDS:', window.ENTRY_IDS);
+}
+
 // Always use proxy to avoid CORS issues
 const USE_PROXY = true;
 const LEAGUE_CODE = '46mnf2';
@@ -996,6 +1017,9 @@ function updateParticipantField(index, field, value) {
 
 function saveParticipantChanges(index) {
     if (index >= 0 && index < participantsData.length) {
+        // Update ENTRY_IDS for aggregate endpoints
+        updateEntryIds();
+        
         // Save to localStorage immediately
         try {
             localStorage.setItem('fplParticipantsData', JSON.stringify(participantsData));
@@ -1030,6 +1054,9 @@ function saveParticipantChanges(index) {
 function deleteParticipant(index) {
     if (confirm(`Är du säker på att du vill ta bort ${participantsData[index].namn}?`)) {
         participantsData.splice(index, 1);
+        
+        // Update ENTRY_IDS for aggregate endpoints
+        updateEntryIds();
         
         // Save to localStorage immediately
         try {
@@ -1098,6 +1125,9 @@ function addNewParticipant(event) {
     
     participantsData.push(newParticipant);
     
+    // Update ENTRY_IDS for aggregate endpoints
+    updateEntryIds();
+    
     // Save to localStorage immediately
     try {
         localStorage.setItem('fplParticipantsData', JSON.stringify(participantsData));
@@ -1137,6 +1167,9 @@ function exportParticipantsData() {
 }
 
 function saveToLocalStorage() {
+    // Update ENTRY_IDS for aggregate endpoints
+    updateEntryIds();
+    
     try {
         localStorage.setItem('fplParticipantsData', JSON.stringify(participantsData));
         
@@ -1169,6 +1202,10 @@ function loadFromLocalStorage() {
                 // Clear existing data and load from localStorage
                 participantsData.splice(0, participantsData.length, ...parsedData);
                 console.log('Loaded participants data from localStorage:', participantsData.length, 'participants');
+                
+                // Update ENTRY_IDS for aggregate endpoints
+                updateEntryIds();
+                
                 return true; // Indicate that data was loaded
             }
         }
@@ -1497,7 +1534,164 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-// FPL API Integration Functions
+// Safe fetch helpers (accept soft/stale 200)
+const PROXY_ROOT = 'https://fpl-proxy-1.onrender.com';
+const API = `${PROXY_ROOT}/api`;
+
+async function fetchJSON(url, tries = 3) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    try {
+      const r = await fetch(url, { cache: 'no-store' });
+      if (r.ok) {
+        const soft  = r.headers.get('X-Proxy-Soft') === '1';
+        const stale = r.headers.get('X-Proxy-Stale') === '1';
+        if (soft || stale) console.info('[FPL] served', { url, soft, stale });
+        return r.json();
+      }
+      last = new Error(`HTTP ${r.status}`);
+    } catch (e) { last = e; }
+    await new Promise(res => setTimeout(res, 500*(i+1) + Math.floor(Math.random()*300)));
+  }
+  throw last;
+}
+
+function chunk(a,n){const o=[];for(let i=0;i<a.length;i+=n)o.push(a.slice(i,i+n));return o;}
+
+// Single-ID helpers that tolerate soft bodies
+async function safeFetchHistory(entryId) {
+  const data = await fetchJSON(`${API}/entry/${entryId}/history/?__=${Date.now()}`);
+  return (data && Array.isArray(data.current)) ? data : { current: [], past: [], chips: [] };
+}
+
+async function safeFetchSummary(entryId) {
+  const data = await fetchJSON(`${API}/entry/${entryId}/?__=${Date.now()}`);
+  return {
+    player_first_name: data?.player_first_name || '',
+    player_last_name:  data?.player_last_name  || '',
+    name:              data?.name || ''
+  };
+}
+
+async function fetchAggregateSummaries(ids){
+  const out=[]; for(const c of chunk(ids,25)){
+    const d=await fetchJSON(`${API}/aggregate/summary?ids=${c.join(',')}&__=${Date.now()}`);
+    out.push(...(d?.results||[]));
+  } return out;
+}
+
+async function fetchAggregateHistory(ids, gw){
+  const out=[]; for(const c of chunk(ids,25)){
+    const d=await fetchJSON(`${API}/aggregate/history?ids=${c.join(',')}&gw=${gw}&__=${Date.now()}`);
+    out.push(...(d?.results||[]));
+  } return out;
+}
+
+// Participants (no "undefined" names)
+async function buildParticipantsFromAggregates(entryIds){
+  const res = await fetchAggregateSummaries(entryIds);
+  return res.map(r=>{
+    if (r.ok && r.data){
+      const fn=r.data?.player_first_name||'', ln=r.data?.player_last_name||'';
+      const displayName = (fn||ln)?`${fn} ${ln}`.trim():`Manager ${r.id}`;
+      const teamName = r.data?.name || undefined;
+      return { fplId:r.id, displayName, teamName };
+    }
+    return { fplId:r.id, displayName:`Manager ${r.id}` };
+  });
+}
+
+// Tables loader (aggregates only; no /picks)
+async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
+  const participants = await buildParticipantsFromAggregates(entryIds);
+  const hist = await fetchAggregateHistory(entryIds, gw);
+  const byId = new Map(hist.map(h=>[h.id,h]));
+
+  const rows = participants.map(p=>{
+    const h = byId.get(p.fplId);
+    const gwPoints = (h && h.ok) ? (h.points ?? null) : null;
+    return { id:p.fplId, displayName:p.displayName, teamName:p.teamName, gwPoints, privateOrBlocked: !h || !h.ok };
+  });
+
+  // reuse existing renderers (unchanged UI)
+  populateSeasonTable?.(rows, bootstrap);
+  populateGameweekTable?.(rows, bootstrap);
+}
+
+// Hook "Tabeller"
+async function onClickTabeller(){
+  if (window.__loadingTables) return; window.__loadingTables=true;
+  try{
+    const bootstrap = await fetchJSON(`${API}/bootstrap-static/?__=${Date.now()}`);
+    const current = bootstrap?.events?.find(e=>e.is_current) || bootstrap?.events?.[0];
+    const gw = (typeof FORCE_GW==='number'&&FORCE_GW>0)?FORCE_GW:(current?.id??1);
+
+    const ids = Array.from(new Set(
+      (Array.isArray(window.ENTRY_IDS)?window.ENTRY_IDS:[])
+        .map(n=>Number(n)).filter(Boolean)
+    ));
+
+    // fallback: derive IDs from league once if needed
+    if (!ids.length && window.LEAGUE_CODE){
+      const s=await fetchJSON(`${API}/leagues-classic/${window.LEAGUE_CODE}/standings/?page_new_entries=1&page_standings=1&phase=1&__=${Date.now()}`);
+      ids.push(...(s?.standings?.results||[]).map(r=>r.entry).filter(Boolean));
+    }
+
+    await loadTablesViewUsingAggregates(ids, gw, bootstrap);
+  } finally { window.__loadingTables=false; }
+}
+
+window.onClickTabeller = onClickTabeller;
+
+// Participants (Deltagare) should build from aggregates if empty
+async function ensureParticipantsData() {
+  if (Array.isArray(window.participantsData) && window.participantsData.length) return;
+
+  let ids = getKnownEntryIds();
+
+  // fallback to league standings
+  if ((!ids || !ids.length) && window.LEAGUE_CODE) {
+    const s = await fetchJSON(`${API}/leagues-classic/${window.LEAGUE_CODE}/standings/?page_new_entries=1&page_standings=1&phase=1&__=${Date.now()}`);
+    ids = (s?.standings?.results || []).map(r => r.entry).filter(Boolean);
+  }
+
+  // build participants via aggregate summaries
+  const res = await fetchAggregateSummaries(ids);
+  window.participantsData = res.map(r => {
+    const first = r?.data?.player_first_name || '';
+    const last  = r?.data?.player_last_name  || '';
+    const displayName = (first || last) ? `${first} ${last}`.trim() : `Manager ${r.id}`;
+    return { fplId: r.id, displayName, teamName: r?.data?.name || '' };
+  });
+}
+
+async function onClickDeltagare() {
+  await ensureParticipantsData();
+  // Reuse your existing renderer function (no UI change)
+  if (typeof populateParticipants === 'function') {
+    populateParticipants(window.participantsData);
+  }
+}
+// Route old handlers safely
+window.onClickDeltagare = onClickDeltagare;
+
+// API self-test: use healthz + tiny summary (don't fail on bootstrap)
+async function testAPIConnection(){
+  try {
+    const h = await fetch(`${PROXY_ROOT}/healthz`);
+    if (!h.ok) throw new Error(`healthz ${h.status}`);
+
+    const sampleId = (Array.isArray(window.ENTRY_IDS) && window.ENTRY_IDS[0]) || 1;
+    const r = await fetch(`${API}/aggregate/summary?ids=${sampleId}&__=${Date.now()}`);
+    if (!r.ok) throw new Error(`summary ${r.status}`);
+
+    showAPIOkBadge?.();
+  } catch (e) {
+    showAPIFailBadge?.(String(e));
+  }
+}
+
+// FPL API Integration Functions (legacy - kept for compatibility)
 async function fetchBootstrapData() {
     try {
         console.log('🔄 Fetching bootstrap data from FPL API via Render proxy...');
@@ -2577,16 +2771,10 @@ function showSection(sectionName) {
         activeButton.classList.add('active');
     }
     
-    // Handle tables section - prevent duplicate loading
+    // Handle tables section - use new aggregate endpoints
     if (sectionName === 'tables') {
-        if (loadingTables) return; // prevent duplicate run
-        loadingTables = true;
-        try {
-            console.log('Tables section shown, populating tables (history only)...');
-            populateTables(); // uses only /history/ + league standings
-        } finally {
-            loadingTables = false;
-        }
+        console.log('Tables section shown, using aggregate endpoints...');
+        populateTablesWrapper().catch(e => console.error('Tables load failed', e));
     }
     
     // Generate roast messages when highlights section is shown
@@ -2625,16 +2813,36 @@ function showTable(tableType) {
     }
 }
 
-// Populate tables with data
-function populateTables() {
-    populateSeasonTable();
-    populateGameweekTable();
+// Ensure Tabeller uses the aggregate loader
+async function populateTablesWrapper() {
+  const bootstrap = await fetchJSON(`${API}/bootstrap-static/?__=${Date.now()}`);
+  const current = bootstrap?.events?.find(e => e.is_current) || bootstrap?.events?.[0];
+  const gw = (typeof FORCE_GW === 'number' && FORCE_GW > 0) ? FORCE_GW : (current?.id ?? 1);
+
+  let ids = getKnownEntryIds();
+
+  // Fallback: derive IDs from league standings if needed
+  if ((!ids || !ids.length) && window.LEAGUE_CODE) {
+    const s = await fetchJSON(`${API}/leagues-classic/${window.LEAGUE_CODE}/standings/?page_new_entries=1&page_standings=1&phase=1&__=${Date.now()}`);
+    const derived = (s?.standings?.results || []).map(r => r.entry).filter(Boolean);
+    ids = Array.from(new Set([...(ids||[]), ...derived]));
+  }
+
+  await loadTablesViewUsingAggregates(ids, gw, bootstrap);
 }
 
-function populateSeasonTable() {
-    console.log('=== POPULATE SEASON TABLE ===');
-    console.log('leagueData.seasonTable:', leagueData.seasonTable);
-    console.log('leagueData.seasonTable length:', leagueData.seasonTable ? leagueData.seasonTable.length : 'UNDEFINED');
+// Route all old calls here (no UI change)
+window.populateTables = populateTablesWrapper;
+
+// Populate tables with data (legacy - now routes to wrapper)
+function populateTables() {
+    populateTablesWrapper().catch(e => console.error('Tables load failed', e));
+}
+
+function populateSeasonTable(rows, bootstrap) {
+    console.log('=== POPULATE SEASON TABLE (AGGREGATE) ===');
+    console.log('Rows:', rows);
+    console.log('Rows length:', rows ? rows.length : 'UNDEFINED');
     
     const tbody = document.getElementById('seasonTableBody');
     console.log('seasonTableBody element:', tbody);
@@ -2644,39 +2852,45 @@ function populateSeasonTable() {
         return;
     }
     
-    if (!leagueData.seasonTable || leagueData.seasonTable.length === 0) {
-        console.error('CRITICAL ERROR: leagueData.seasonTable is empty!');
+    // Make table renderers tolerate empty input (no "CRITICAL ERROR")
+    function safeArray(a){ return Array.isArray(a) ? a : []; }
+    rows = safeArray(rows);
+    if (!rows.length) {
+        console.info('[Tables] No rows to render (empty dataset)');
         tbody.innerHTML = '<tr><td colspan="4">No data available</td></tr>';
         return;
     }
     
     tbody.innerHTML = '';
     
-    leagueData.seasonTable.forEach((player, index) => {
+    // Sort by total points (descending) - for now use GW points as proxy
+    const sortedRows = [...rows].sort((a, b) => (b.gwPoints || 0) - (a.gwPoints || 0));
+    
+    sortedRows.forEach((player, index) => {
         console.log(`Creating row ${index + 1} for player:`, player);
         const row = document.createElement('tr');
         row.innerHTML = `
             <td>${index + 1}</td>
-            <td>${player.namn}</td>
-            <td>${player.totalPoäng}</td>
-            <td>${player.favoritlag}</td>
+            <td>${player.displayName || `Manager ${player.id}`}</td>
+            <td>${player.gwPoints || 0}</td>
+            <td>${player.teamName || '—'}</td>
         `;
         
         // Add tooltip for blocked teams
-        if (player.privateOrBlocked && player.fplId) {
-            markBlockedRow(row, player.fplId);
+        if (player.privateOrBlocked && player.id) {
+            markBlockedRow(row, player.id);
         }
         
         tbody.appendChild(row);
     });
     
-    console.log('Season table populated with', leagueData.seasonTable.length, 'rows');
+    console.log('Season table populated with', sortedRows.length, 'rows');
 }
 
-function populateGameweekTable() {
-    console.log('=== POPULATE GAMEWEEK TABLE ===');
-    console.log('leagueData.gameweekTable:', leagueData.gameweekTable);
-    console.log('leagueData.gameweekTable length:', leagueData.gameweekTable ? leagueData.gameweekTable.length : 'UNDEFINED');
+function populateGameweekTable(rows, bootstrap) {
+    console.log('=== POPULATE GAMEWEEK TABLE (AGGREGATE) ===');
+    console.log('Rows:', rows);
+    console.log('Rows length:', rows ? rows.length : 'UNDEFINED');
     
     const tbody = document.getElementById('gameweekTableBody');
     console.log('gameweekTableBody element:', tbody);
@@ -2686,27 +2900,33 @@ function populateGameweekTable() {
         return;
     }
     
-    if (!leagueData.gameweekTable || leagueData.gameweekTable.length === 0) {
-        console.error('CRITICAL ERROR: leagueData.gameweekTable is empty!');
+    // Make table renderers tolerate empty input (no "CRITICAL ERROR")
+    function safeArray(a){ return Array.isArray(a) ? a : []; }
+    rows = safeArray(rows);
+    if (!rows.length) {
+        console.info('[Tables] No rows to render (empty dataset)');
         tbody.innerHTML = '<tr><td colspan="4">No gameweek data available</td></tr>';
         return;
     }
     
     tbody.innerHTML = '';
     
-    leagueData.gameweekTable.forEach((player, index) => {
+    // Sort by gameweek points (descending)
+    const sortedRows = [...rows].sort((a, b) => (b.gwPoints || 0) - (a.gwPoints || 0));
+    
+    sortedRows.forEach((player, index) => {
         console.log(`Creating GW row ${index + 1} for player:`, player);
         const row = document.createElement('tr');
         row.innerHTML = `
             <td>${index + 1}</td>
-            <td>${player.namn}</td>
-            <td>${player.gameweekPoints || 0}</td>
-            <td>${player.favoritlag}</td>
+            <td>${player.displayName || `Manager ${player.id}`}</td>
+            <td>${player.gwPoints || 0}</td>
+            <td>${player.teamName || '—'}</td>
         `;
         
         // Add tooltip for blocked teams
-        if (player.privateOrBlocked && player.fplId) {
-            markBlockedRow(row, player.fplId);
+        if (player.privateOrBlocked && player.id) {
+            markBlockedRow(row, player.id);
         }
         
         tbody.appendChild(row);
@@ -2715,10 +2935,12 @@ function populateGameweekTable() {
     // Update gameweek label
     const gameweekLabel = document.getElementById('currentGameweekLabel');
     if (gameweekLabel) {
-        gameweekLabel.textContent = `Gameweek ${currentGameweek}`;
+        const current = bootstrap?.events?.find(e => e.is_current) || bootstrap?.events?.[0];
+        const gw = (typeof FORCE_GW === 'number' && FORCE_GW > 0) ? FORCE_GW : (current?.id ?? 1);
+        gameweekLabel.textContent = `Gameweek ${gw}`;
     }
     
-    console.log('Gameweek table populated with', leagueData.gameweekTable.length, 'rows');
+    console.log('Gameweek table populated with', sortedRows.length, 'rows');
 }
 
 
@@ -2729,18 +2951,32 @@ function populateGameweekTable() {
 
 
 
-// Update highlights from gameweek data
+// Highlights: never crash on 403; degrade gracefully
+async function buildHighlight(entryId, gw) {
+  const hist = await safeFetchHistory(entryId);
+  const row  = (hist.current || []).find(x => x.event === gw) || null;
+  const points = row?.points ?? null;
+
+  let captain = '—', benchPoints = '—';
+  try {
+    const rec = await getPicksCached(entryId, gw); // your existing cached wrapper
+    if (rec && rec.status === 'ok' && Array.isArray(rec.data?.picks)) {
+      // derive captain/bench as you already do
+      // captain = ...
+      // benchPoints = ...
+    }
+  } catch (_) {} // don't crash highlights
+
+  return { entryId, points, captain, benchPoints };
+}
+
+// Update highlights from gameweek data (resilient version)
 async function updateHighlightsFromData() {
-    console.log('=== UPDATE HIGHLIGHTS FROM DATA ===');
-    console.log('leagueData.gameweekTable:', leagueData.gameweekTable);
-    console.log('leagueData.gameweekTable.length:', leagueData.gameweekTable ? leagueData.gameweekTable.length : 'UNDEFINED');
+    console.log('=== UPDATE HIGHLIGHTS FROM DATA (RESILIENT) ===');
     
     // Check if DOM elements exist
     const weeklyRocketElement = document.getElementById('weeklyRocket');
     const weeklyFlopElement = document.getElementById('weeklyFlop');
-    
-    console.log('weeklyRocket element:', weeklyRocketElement);
-    console.log('weeklyFlop element:', weeklyFlopElement);
     
     if (!weeklyRocketElement || !weeklyFlopElement) {
         console.error('CRITICAL ERROR: Highlight DOM elements not found!');
@@ -2748,14 +2984,10 @@ async function updateHighlightsFromData() {
     }
     
     // Check if we have real data or should use mock data
-    // In API-only mode, we should always use real data if available
     const useMockData = DISABLE_API_CALLS || !leagueData.gameweekTable || leagueData.gameweekTable.length === 0;
     
     if (useMockData) {
-        console.log('=== DEBUGGING WEEKLY HIGHLIGHTS ===');
         console.log('Using mock data for highlights');
-        console.log('participantsData length:', participantsData.length);
-        console.log('participantsData names:', participantsData.map(p => p.namn));
         
         // Check if participantsData is available
         if (!participantsData || participantsData.length === 0) {
@@ -2767,7 +2999,6 @@ async function updateHighlightsFromData() {
         
         // Use random participants for mock highlights
         const shuffledParticipants = [...participantsData].sort(() => 0.5 - Math.random());
-        console.log('shuffledParticipants names:', shuffledParticipants.map(p => p.namn));
         
         // Generate realistic gameweek points (30-85 range for a single week)
         const rocketPoints = Math.floor(Math.random() * 55) + 30; // 30-85 points
@@ -2775,22 +3006,11 @@ async function updateHighlightsFromData() {
         
         // Veckans Raket - Random participant with high gameweek points
         const rocket = shuffledParticipants[0];
-        console.log('Setting rocket:', rocket.namn, 'with points:', rocketPoints);
         weeklyRocketElement.textContent = `${rocket.namn} - ${rocketPoints} poäng`;
         
         // Veckans Sopa - Random participant with low gameweek points
         const flop = shuffledParticipants[1];
-        console.log('Setting flop:', flop.namn, 'with points:', flopPoints);
         weeklyFlopElement.textContent = `${flop.namn} - ${flopPoints} poäng`;
-        
-        console.log('Final weeklyRocketElement.textContent:', weeklyRocketElement.textContent);
-        console.log('Final weeklyFlopElement.textContent:', weeklyFlopElement.textContent);
-        
-        // Force a test to see if the element is being updated
-        setTimeout(() => {
-            console.log('After 1 second - weeklyFlopElement.textContent:', weeklyFlopElement.textContent);
-            console.log('After 1 second - weeklyFlopElement.innerHTML:', weeklyFlopElement.innerHTML);
-        }, 1000);
         
         // Mock captain data
         const captain = shuffledParticipants[2];
@@ -2805,12 +3025,10 @@ async function updateHighlightsFromData() {
         
         // Veckans Raket - Highest gameweek points
         const rocket = leagueData.gameweekTable[0];
-        console.log('Rocket player:', rocket);
         weeklyRocketElement.textContent = `${rocket.name} - ${rocket.points} poäng`;
         
         // Veckans Sopa - Lowest gameweek points
         const flop = leagueData.gameweekTable[leagueData.gameweekTable.length - 1];
-        console.log('Flop player:', flop);
         weeklyFlopElement.textContent = `${flop.name} - ${flop.points} poäng`;
         
         // Use fallback captain and bench data if API is not available
@@ -2822,7 +3040,6 @@ async function updateHighlightsFromData() {
         }
     }
     
-    console.log('About to call generateRoastMessages');
     // Generate gamified roast messages
     generateRoastMessages();
     generateBeerLevels();
