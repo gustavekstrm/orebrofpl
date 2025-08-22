@@ -13,25 +13,24 @@ window.__diag = async function () {
   try {
     const PROXY_ROOT = 'https://fpl-proxy-1.onrender.com';
     const API = `${PROXY_ROOT}/api`;
-    const ids = Array.from(new Set([
-      ...(Array.isArray(window.ENTRY_IDS) ? window.ENTRY_IDS : []),
-      ...(Array.isArray(window.participantsData) ? window.participantsData.map(p => p.fplId) : [])
-    ].map(n => Number(n)).filter(Boolean)));
+    
+    // Get final IDs used for aggregates
+    const finalIds = getKnownEntryIds();
 
-    console.log('[DIAG] ENTRY_IDS:', (window.ENTRY_IDS||[]).length, 
+    console.log('[DIAG] ENTRY_IDS count:', (window.ENTRY_IDS||[]).length, 
                 'participantsData:', (window.participantsData||[]).length,
                 'LEAGUE_CODE:', window.LEAGUE_CODE,
-                'known ids:', ids.length, ids.slice(0, 10));
+                'final ids for aggregates:', finalIds.length, finalIds.slice(0, 10));
 
     // bootstrap & gw
     const bj = await safeFetchBootstrap();
     const cur = (bj?.events||[]).find(e=>e.is_current) || (bj?.events||[])[0] || { id: 1 };
     const gw = cur.id || 1;
 
-    if (ids.length){
-      const s = await fetch(`${API}/aggregate/summary?ids=${ids.slice(0,25).join(',')}&__=${Date.now()}`);
+    if (finalIds.length){
+      const s = await fetch(`${API}/aggregate/summary?ids=${finalIds.slice(0,25).join(',')}&__=${Date.now()}`);
       const sj = await s.json();
-      const h = await fetch(`${API}/aggregate/history?ids=${ids.slice(0,25).join(',')}&gw=${gw}&__=${Date.now()}`);
+      const h = await fetch(`${API}/aggregate/history?ids=${finalIds.slice(0,25).join(',')}&gw=${gw}&__=${Date.now()}`);
       const hj = await h.json();
       console.log('[DIAG] agg summary:', s.status, sj?.results?.length, 'agg history:', h.status, hj?.results?.length, 'gw:', gw);
     } else {
@@ -49,13 +48,14 @@ const FPL_API_BASE = 'https://fpl-proxy-1.onrender.com/api';
 const FPL_PROXY_BASE = FPL_API_BASE;
 
 // Global variables for aggregate endpoints
-window.LEAGUE_CODE = '46mnf2';
-window.ENTRY_IDS = []; // Will be populated from participantsData
+// window.LEAGUE_CODE and window.ENTRY_IDS are now set by participants.config.js
 
 // Single source of truth for Entry IDs
 function getKnownEntryIds() {
   const a = [];
+  // Read from window.ENTRY_IDS first (from config)
   if (Array.isArray(window.ENTRY_IDS)) a.push(...window.ENTRY_IDS);
+  // Then from participantsData as backup
   if (Array.isArray(window.participantsData)) {
     for (const p of window.participantsData) if (p?.fplId) a.push(p.fplId);
   }
@@ -63,10 +63,10 @@ function getKnownEntryIds() {
   return Array.from(new Set(a.map(n => Number(n)).filter(Boolean)));
 }
 
-// Helper function to update ENTRY_IDS from participantsData
+// Helper function to update ENTRY_IDS from participantsData (legacy - now handled by config)
 function updateEntryIds() {
-    window.ENTRY_IDS = participantsData.filter(p => p.fplId).map(p => p.fplId);
-    console.log('Updated ENTRY_IDS:', window.ENTRY_IDS);
+    // This function is kept for backward compatibility but ENTRY_IDS are now managed by participants.config.js
+    console.log('updateEntryIds called - ENTRY_IDS are now managed by participants.config.js');
 }
 
 // Always use proxy to avoid CORS issues
@@ -2991,6 +2991,16 @@ async function populateTablesWrapper() {
     const derived = (s?.standings?.results || []).map(r => r.entry).filter(Boolean);
     ids = Array.from(new Set([...(ids||[]), ...derived]));
   }
+  
+  // If still no IDs after trying LEAGUE_CODE fallback, don't call aggregates
+  if (!ids || !ids.length) {
+    console.info('[Tables] No participants found (0 IDs) - missing ENTRY_IDS and standings empty/soft');
+    // Render fallback row
+    populateSeasonTable([], bootstrap);
+    populateGameweekTable([], bootstrap);
+    return;
+  }
+  
   await loadTablesViewUsingAggregates(ids, gw, bootstrap);
 }
 
@@ -3850,6 +3860,9 @@ window.testScriptLoaded = function() {
     console.log('participantsData length:', participantsData.length);
     return 'Script loaded successfully';
 };
+
+// One-liner to verify wiring
+console.log('build', window.__BUILD_TAG__, 'ENTRY_IDS', (window.ENTRY_IDS||[]).length);
 
 // Add direct admin access that doesn't rely on function exports
 window.adminLogin = function() {
