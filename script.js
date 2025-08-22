@@ -1645,35 +1645,86 @@ window.onClickTabeller = onClickTabeller;
 
 // Participants (Deltagare) should build from aggregates if empty
 async function ensureParticipantsData() {
-  if (Array.isArray(window.participantsData) && window.participantsData.length) return;
+  // Use existing participantsData if available
+  if (Array.isArray(participantsData) && participantsData.length > 0) {
+    console.log('Using existing participantsData:', participantsData.length, 'participants');
+    return;
+  }
 
   let ids = getKnownEntryIds();
+  console.log('ensureParticipantsData: got IDs:', ids);
 
   // fallback to league standings
   if ((!ids || !ids.length) && window.LEAGUE_CODE) {
+    console.log('No IDs found, deriving from league standings...');
     const s = await fetchJSON(`${API}/leagues-classic/${window.LEAGUE_CODE}/standings/?page_new_entries=1&page_standings=1&phase=1&__=${Date.now()}`);
     ids = (s?.standings?.results || []).map(r => r.entry).filter(Boolean);
+    console.log('Derived IDs from league:', ids);
+  }
+
+  if (!ids || !ids.length) {
+    console.warn('No entry IDs available for participants');
+    return;
   }
 
   // build participants via aggregate summaries
+  console.log('Building participants from aggregate summaries...');
   const res = await fetchAggregateSummaries(ids);
-  window.participantsData = res.map(r => {
+  console.log('Aggregate summaries result:', res);
+  
+  // Update the global participantsData array with aggregate data
+  participantsData.length = 0;
+  participantsData.push(...res.map(r => {
     const first = r?.data?.player_first_name || '';
     const last  = r?.data?.player_last_name  || '';
     const displayName = (first || last) ? `${first} ${last}`.trim() : `Manager ${r.id}`;
-    return { fplId: r.id, displayName, teamName: r?.data?.name || '' };
-  });
+    return { 
+      fplId: r.id, 
+      namn: displayName,
+      displayName, 
+      teamName: r?.data?.name || '',
+      totalPoäng: 2000, // Default value
+      favoritlag: '',
+      profilRoast: 'Ny deltagare - välkommen!',
+      image: generateAvatarDataURL(displayName.charAt(0)),
+      lastSeasonRank: 'N/A',
+      bestGameweek: 0
+    };
+  }));
+  
+  console.log('Updated participantsData from aggregates:', participantsData);
 }
 
 async function onClickDeltagare() {
+  console.log('onClickDeltagare called');
   await ensureParticipantsData();
-  // Reuse your existing renderer function (no UI change)
-  if (typeof populateParticipants === 'function') {
-    populateParticipants(window.participantsData);
-  }
+  // Use the correct function name
+  populateProfiles();
 }
 // Route old handlers safely
 window.onClickDeltagare = onClickDeltagare;
+
+// Add diagnostics function for debugging
+window.__diag = async function() {
+  console.log('=== DIAGNOSTICS ===');
+  console.log('ENTRY_IDS:', window.ENTRY_IDS);
+  console.log('LEAGUE_CODE:', window.LEAGUE_CODE);
+  console.log('participantsData length:', participantsData.length);
+  console.log('First 3 participants:', participantsData.slice(0, 3));
+  
+  try {
+    const ids = getKnownEntryIds();
+    console.log('getKnownEntryIds():', ids);
+    
+    if (ids.length > 0) {
+      console.log('Testing aggregate summary...');
+      const summaries = await fetchAggregateSummaries(ids.slice(0, 3));
+      console.log('Aggregate summaries (first 3):', summaries);
+    }
+  } catch (e) {
+    console.error('Diagnostics error:', e);
+  }
+};
 
 // API self-test: use healthz + tiny summary (don't fail on bootstrap)
 async function testAPIConnection(){
@@ -2751,6 +2802,8 @@ function showSection(sectionName) {
     // Guard against invalid input
     if (!sectionName) return;
     
+    console.log('showSection called with:', sectionName);
+    
     // Hide all sections
     const sections = document.querySelectorAll('.section');
     sections.forEach(section => section.classList.remove('active'));
@@ -2775,6 +2828,12 @@ function showSection(sectionName) {
     if (sectionName === 'tables') {
         console.log('Tables section shown, using aggregate endpoints...');
         populateTablesWrapper().catch(e => console.error('Tables load failed', e));
+    }
+    
+    // Handle profiles section (Deltagare) - ensure data is loaded
+    if (sectionName === 'profiles') {
+        console.log('Profiles section shown, ensuring participants data...');
+        onClickDeltagare().catch(e => console.error('Profiles load failed', e));
     }
     
     // Generate roast messages when highlights section is shown
