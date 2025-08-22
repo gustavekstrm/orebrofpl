@@ -1,5 +1,48 @@
 // Configuration
 console.log('=== SCRIPT.JS LOADING ===');
+
+// Ensure these functions exist (use no-op fallbacks if undefined)
+window.fetchJSON = window.fetchJSON || (async () => ({}));
+window.fetchAggregateSummaries = window.fetchAggregateSummaries || (async () => ({ results: [] }));
+window.fetchAggregateHistory = window.fetchAggregateHistory || (async () => ({ results: [], gw: 1 }));
+window.loadTablesViewUsingAggregates = window.loadTablesViewUsingAggregates || (async () => {});
+window.ensureParticipantsData = window.ensureParticipantsData || (async () => { window.participantsData = window.participantsData || []; });
+
+// Diagnostics (dev-only)
+window.__diag = async function () {
+  try {
+    const PROXY_ROOT = 'https://fpl-proxy-1.onrender.com';
+    const API = `${PROXY_ROOT}/api`;
+    const ids = Array.from(new Set([
+      ...(Array.isArray(window.ENTRY_IDS) ? window.ENTRY_IDS : []),
+      ...(Array.isArray(window.participantsData) ? window.participantsData.map(p => p.fplId) : [])
+    ].map(n => Number(n)).filter(Boolean)));
+
+    console.log('[DIAG] ENTRY_IDS:', (window.ENTRY_IDS||[]).length, 
+                'participantsData:', (window.participantsData||[]).length,
+                'LEAGUE_CODE:', window.LEAGUE_CODE,
+                'known ids:', ids.length, ids.slice(0, 10));
+
+    // bootstrap & gw
+    const b = await fetch(`${API}/bootstrap-static/?__=${Date.now()}`);
+    const bj = await b.json();
+    const cur = (bj?.events||[]).find(e=>e.is_current) || (bj?.events||[])[0] || { id: 1 };
+    const gw = cur.id || 1;
+
+    if (ids.length){
+      const s = await fetch(`${API}/aggregate/summary?ids=${ids.slice(0,25).join(',')}&__=${Date.now()}`);
+      const sj = await s.json();
+      const h = await fetch(`${API}/aggregate/history?ids=${ids.slice(0,25).join(',')}&gw=${gw}&__=${Date.now()}`);
+      const hj = await h.json();
+      console.log('[DIAG] agg summary:', s.status, sj?.results?.length, 'agg history:', h.status, hj?.results?.length, 'gw:', gw);
+    } else {
+      console.warn('[DIAG] No IDs detected — check ENTRY_IDS init or LEAGUE_CODE fallback.');
+    }
+  } catch (e) {
+    console.error('[DIAG] failed:', e);
+  }
+};
+
 const CORRECT_PASSWORD = 'fantasyorebro';
 const ADMIN_PASSWORD = 'Pepsie10';
 // FPL API Configuration - Using Render Proxy (LIVE)
@@ -1532,6 +1575,16 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+    
+    // Bind explicit click handlers (in case inline onclick isn't firing)
+    const q = s => document.querySelector(s);
+    const btnTables = q('[data-section="tables"], #nav-tables, a[href="#tables"]');
+    const btnProfiles = q('[data-section="profiles"], #nav-profiles, a[href="#profiles"], a[href="#participants"], a[href="#deltagare"]');
+
+    if (btnTables) btnTables.addEventListener('click', () => window.showSection('tables'));
+    if (btnProfiles) btnProfiles.addEventListener('click', () => window.showSection('profiles'));
+
+    console.info('[Boot] handlers bound, script v21');
 });
 
 // Safe fetch helpers (accept soft/stale 200)
@@ -2798,54 +2851,96 @@ function setupEventListeners() {
 let loadingTables = false;
 
 // Navigation functions
-function showSection(sectionName) {
-    // Guard against invalid input
-    if (!sectionName) return;
-    
-    console.log('showSection called with:', sectionName);
-    
-    // Hide all sections
-    const sections = document.querySelectorAll('.section');
-    sections.forEach(section => section.classList.remove('active'));
-    
-    // Show selected section
-    const targetSection = document.getElementById(sectionName);
-    if (targetSection) {
-        targetSection.classList.add('active');
-    }
-    
-    // Update navigation buttons
-    const navButtons = document.querySelectorAll('.nav-btn');
-    navButtons.forEach(btn => btn.classList.remove('active'));
-    
-    // Find and activate the correct button (safer than event.target)
-    const activeButton = document.querySelector(`[onclick*="showSection('${sectionName}')"]`);
-    if (activeButton) {
-        activeButton.classList.add('active');
-    }
-    
-    // Handle tables section - use new aggregate endpoints
-    if (sectionName === 'tables') {
-        console.log('Tables section shown, using aggregate endpoints...');
-        populateTablesWrapper().catch(e => console.error('Tables load failed', e));
-    }
-    
-    // Handle profiles section (Deltagare) - ensure data is loaded
-    if (sectionName === 'profiles') {
-        console.log('Profiles section shown, ensuring participants data...');
-        onClickDeltagare().catch(e => console.error('Profiles load failed', e));
-    }
-    
-    // Generate roast messages when highlights section is shown
-    if (sectionName === 'highlights') {
-        console.log('Highlights section shown, generating roast messages...');
-        setTimeout(() => {
-            generateRoastMessages();
-            generateBeerLevels();
-            updateWallOfFameShame();
-        }, 100);
-    }
+function resolveSectionId(id){
+  const aliases = { 
+    tables: ['tables','tabeller'], 
+    profiles: ['profiles','participants','deltagare'] 
+  };
+  const list = aliases[id] || [id];
+  for (const cand of list){
+    if (document.getElementById(cand)) return cand;
+  }
+  return id;
 }
+
+const __origShowSection = typeof window.showSection === 'function' ? window.showSection : null;
+window.showSection = function patchedShowSection(sectionId) {
+  const resolved = resolveSectionId(sectionId);
+  if (resolved !== sectionId) console.info('[Section alias]', sectionId, '→', resolved);
+
+  // Guard against invalid input
+  if (!resolved) return;
+
+  console.log('showSection called with:', resolved);
+  
+  // Hide all sections
+  const sections = document.querySelectorAll('.section');
+  sections.forEach(section => section.classList.remove('active'));
+  
+  // Show selected section
+  const targetSection = document.getElementById(resolved);
+  if (targetSection) {
+      targetSection.classList.add('active');
+  }
+  
+  // Update navigation buttons
+  const navButtons = document.querySelectorAll('.nav-btn');
+  navButtons.forEach(btn => btn.classList.remove('active'));
+  
+  // Find and activate the correct button (safer than event.target)
+  const activeButton = document.querySelector(`[onclick*="showSection('${sectionId}')"]`);
+  if (activeButton) {
+      activeButton.classList.add('active');
+  }
+
+  if (resolved === 'tables') {
+    if (typeof populateTablesWrapper === 'function') {
+      populateTablesWrapper().catch(e => console.error('Tables load failed', e));
+    } else if (typeof loadTablesViewUsingAggregates === 'function') {
+      // fallback direct
+      (async () => {
+        const PROXY_ROOT = 'https://fpl-proxy-1.onrender.com';
+        const API = `${PROXY_ROOT}/api`;
+        const b = await fetchJSON(`${API}/bootstrap-static/?__=${Date.now()}`);
+        const cur = b?.events?.find(e=>e.is_current) || b?.events?.[0] || { id: 1 };
+        const gw = (typeof FORCE_GW === 'number' && FORCE_GW > 0) ? FORCE_GW : (cur.id || 1);
+        const ids = Array.from(new Set([
+          ...(Array.isArray(window.ENTRY_IDS) ? window.ENTRY_IDS : []),
+          ...(Array.isArray(window.participantsData) ? window.participantsData.map(p => p.fplId) : [])
+        ].map(Number).filter(Boolean)));
+        await loadTablesViewUsingAggregates(ids, gw, b);
+      })().catch(e => console.error('Tables direct load failed', e));
+    }
+  }
+
+  if (resolved === 'profiles') {
+    if (typeof onClickDeltagare === 'function') {
+      onClickDeltagare().catch(e => console.error('Profiles load failed', e));
+    } else {
+      // generic fallback
+      (async () => {
+        await ensureParticipantsData();
+        if (typeof populateProfiles === 'function') {
+          populateProfiles(window.participantsData || []);
+        } else {
+          console.warn('[Profiles] populateProfiles() not found');
+        }
+      })().catch(e => console.error('Profiles direct load failed', e));
+    }
+  }
+  
+  // Generate roast messages when highlights section is shown
+  if (resolved === 'highlights') {
+      console.log('Highlights section shown, generating roast messages...');
+      setTimeout(() => {
+          generateRoastMessages();
+          generateBeerLevels();
+          updateWallOfFameShame();
+      }, 100);
+  }
+
+  return __origShowSection ? __origShowSection(resolved) : undefined;
+};
 
 function showTable(tableType) {
     // Guard against invalid input
@@ -2896,6 +2991,16 @@ window.populateTables = populateTablesWrapper;
 // Populate tables with data (legacy - now routes to wrapper)
 function populateTables() {
     populateTablesWrapper().catch(e => console.error('Tables load failed', e));
+}
+
+// Participants fallback renderer (no blank screen)
+function renderNoParticipantsRow(){
+  const tbody = document.querySelector('#profilesTableBody, #participantsTableBody');
+  if (!tbody) return;
+  const tr = document.createElement('tr');
+  const td = document.createElement('td');
+  td.colSpan = 6; td.textContent = 'No participants found (0 IDs)';
+  tr.appendChild(td); tbody.appendChild(tr);
 }
 
 function populateSeasonTable(rows, bootstrap) {
@@ -3702,7 +3807,7 @@ setInterval(() => {
 
 // Export functions to window for global access
 window.checkPassword = checkPassword;
-window.showSection = showSection;
+// window.showSection is already patched above - don't override
 window.showTable = showTable;
 // logout function removed - not needed
 window.copyLeagueCode = copyLeagueCode;
