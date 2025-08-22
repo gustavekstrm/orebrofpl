@@ -24,8 +24,7 @@ window.__diag = async function () {
                 'known ids:', ids.length, ids.slice(0, 10));
 
     // bootstrap & gw
-    const b = await fetch(`${API}/bootstrap-static/?__=${Date.now()}`);
-    const bj = await b.json();
+    const bj = await safeFetchBootstrap();
     const cur = (bj?.events||[]).find(e=>e.is_current) || (bj?.events||[])[0] || { id: 1 };
     const gw = cur.id || 1;
 
@@ -1609,6 +1608,21 @@ async function fetchJSON(url, tries = 3) {
   throw last;
 }
 
+async function safeFetchBootstrap(){
+  try {
+    const data = await fetchJSON(`${API}/bootstrap-static/?__=${Date.now()}`);
+    return data;
+  } catch (e) {
+    console.info('[Bootstrap] soft fallback due to', e?.message || e);
+    // Minimal skeleton to proceed
+    return {
+      events: [{ id: (typeof FORCE_GW==='number' && FORCE_GW>0) ? FORCE_GW : 1, is_current: true }],
+      phases: [], teams: [], total_players: 0,
+      elements: [], element_stats: [], element_types: []
+    };
+  }
+}
+
 function chunk(a,n){const o=[];for(let i=0;i<a.length;i+=n)o.push(a.slice(i,i+n));return o;}
 
 // Single-ID helpers that tolerate soft bodies
@@ -1675,8 +1689,8 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
 async function onClickTabeller(){
   if (window.__loadingTables) return; window.__loadingTables=true;
   try{
-    const bootstrap = await fetchJSON(`${API}/bootstrap-static/?__=${Date.now()}`);
-    const current = bootstrap?.events?.find(e=>e.is_current) || bootstrap?.events?.[0];
+    const bootstrap = await safeFetchBootstrap();
+    const current = (bootstrap?.events||[]).find(e=>e.is_current) || (bootstrap?.events||[])[0];
     const gw = (typeof FORCE_GW==='number'&&FORCE_GW>0)?FORCE_GW:(current?.id??1);
 
     const ids = Array.from(new Set(
@@ -2899,10 +2913,8 @@ window.showSection = function patchedShowSection(sectionId) {
     } else if (typeof loadTablesViewUsingAggregates === 'function') {
       // fallback direct
       (async () => {
-        const PROXY_ROOT = 'https://fpl-proxy-1.onrender.com';
-        const API = `${PROXY_ROOT}/api`;
-        const b = await fetchJSON(`${API}/bootstrap-static/?__=${Date.now()}`);
-        const cur = b?.events?.find(e=>e.is_current) || b?.events?.[0] || { id: 1 };
+        const b = await safeFetchBootstrap();
+        const cur = (b?.events||[]).find(e=>e.is_current) || (b?.events||[])[0] || { id: 1 };
         const gw = (typeof FORCE_GW === 'number' && FORCE_GW > 0) ? FORCE_GW : (cur.id || 1);
         const ids = Array.from(new Set([
           ...(Array.isArray(window.ENTRY_IDS) ? window.ENTRY_IDS : []),
@@ -2969,19 +2981,16 @@ function showTable(tableType) {
 
 // Ensure Tabeller uses the aggregate loader
 async function populateTablesWrapper() {
-  const bootstrap = await fetchJSON(`${API}/bootstrap-static/?__=${Date.now()}`);
-  const current = bootstrap?.events?.find(e => e.is_current) || bootstrap?.events?.[0];
-  const gw = (typeof FORCE_GW === 'number' && FORCE_GW > 0) ? FORCE_GW : (current?.id ?? 1);
+  const bootstrap = await safeFetchBootstrap();
+  const current = (bootstrap?.events||[]).find(e=>e.is_current) || (bootstrap?.events||[])[0];
+  const gw = (typeof FORCE_GW==='number' && FORCE_GW>0) ? FORCE_GW : (current?.id || 1);
 
   let ids = getKnownEntryIds();
-
-  // Fallback: derive IDs from league standings if needed
-  if ((!ids || !ids.length) && window.LEAGUE_CODE) {
+  if ((!ids || !ids.length) && window.LEAGUE_CODE){
     const s = await fetchJSON(`${API}/leagues-classic/${window.LEAGUE_CODE}/standings/?page_new_entries=1&page_standings=1&phase=1&__=${Date.now()}`);
     const derived = (s?.standings?.results || []).map(r => r.entry).filter(Boolean);
     ids = Array.from(new Set([...(ids||[]), ...derived]));
   }
-
   await loadTablesViewUsingAggregates(ids, gw, bootstrap);
 }
 
