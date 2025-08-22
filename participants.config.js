@@ -60,7 +60,63 @@ window.ENTRY_IDS = [
 ];
 
 // Build tag for verification
-window.__BUILD_TAG__ = 'v1.0';
+window.__BUILD_TAG__ = 'v2.0';
+
+// Manual ID→name mapping extracted from participantsData array
+window.PARTICIPANT_OVERRIDES = {
+  1490173: { displayName: "Melvin Yuksel", teamName: "Sunderland" },
+  1450793: { displayName: "Jakob Gårlin", teamName: "Liverpool" },
+  133147:  { displayName: "Joel A-Segerlind", teamName: "Arsenal" },
+  8759848: { displayName: "Viggo Svedin", teamName: "Chelsea" },
+  2703061: { displayName: "Julius Höglund", teamName: "Manchester City" },
+  2269283: { displayName: "Erik Rotsenius", teamName: "Tottenham" },
+  5527279: { displayName: "William Kuyumcu", teamName: "Newcastle" },
+  4096096: { displayName: "Axel Ekström", teamName: "Aston Villa" },
+  348966:  { displayName: "Gustav Ekström", teamName: "Arsenal" },
+  2884065: { displayName: "David Jansson", teamName: "Ipswich" },
+  412417:  { displayName: "Alex Pettersson", teamName: "Tottenham" },
+  5990179: { displayName: "Sigge Carlsson", teamName: "West Ham" },
+  4382408: { displayName: "Johan Pauly", teamName: "Crystal Palace" },
+  3666480: { displayName: "Filip Nieminen", teamName: "" },
+  78175:   { displayName: "Edvin Möller", teamName: "" },
+  1537567: { displayName: "Johan Ivarsson", teamName: "" },
+  6316536: { displayName: "Jacob Åhlander", teamName: "" },
+  1884529: { displayName: "Victor Celik", teamName: "" },
+  4413902: { displayName: "Felix Möller", teamName: "" },
+  4971106: { displayName: "Markus Rosdahl", teamName: "" },
+  5735314: { displayName: "Tobias Pettersson", teamName: "" },
+  908791:  { displayName: "Robin Damström", teamName: "" },
+  547800:  { displayName: "David Alfredsson", teamName: "" },
+  4294348: { displayName: "Karl Weckström", teamName: "" },
+  8456844: { displayName: "Oliver S", teamName: "" },
+  3017284: { displayName: "Nisse Karlsson", teamName: "" },
+  6176435: { displayName: "Enis Krivdic", teamName: "" },
+  35100:   { displayName: "Sebbe Sundkvist", teamName: "" },
+  1435536: { displayName: "Leo Vasikisson", teamName: "" },
+  6069375: { displayName: "Gustaf Jorman Bergholm", teamName: "" },
+  542217:  { displayName: "Alex Bowern", teamName: "" },
+  2563309: { displayName: "David Ivarsson", teamName: "" },
+  8779490: { displayName: "Elton Vallberg", teamName: "" },
+  141529:  { displayName: "Noah Freij", teamName: "" },
+  5378419: { displayName: "WIlgot Rydborg", teamName: "" },
+  1146757: { displayName: "Edvin Mårtensson", teamName: "" },
+  990189:  { displayName: "Hugo Sundquist", teamName: "" },
+  2009407: { displayName: "Kevin Schultze", teamName: "" },
+  2162629: { displayName: "Adrian Torabi", teamName: "" },
+  1289520: { displayName: "Elias Sundh", teamName: "" },
+  5746665: { displayName: "Dimitris Bakalokos", teamName: "" },
+  7634954: { displayName: "Hugo Nilsson", teamName: "" },
+  6001484: { displayName: "Emil Vide", teamName: "" },
+  1084577: { displayName: "Max Rotschild Lundin", teamName: "" },
+  190340:  { displayName: "Melker Johansson", teamName: "" },
+  1989237: { displayName: "macsnizz Victor", teamName: "" },
+  9180666: { displayName: "Teodor Tjernberg", teamName: "" },
+  759543:  { displayName: "Simon Edberger Persson", teamName: "" },
+  3030499: { displayName: "Juan Pedersson", teamName: "" },
+  3652477: { displayName: "Wilmer Bremvik", teamName: "" },
+  9340368: { displayName: "Malte L", teamName: "" }
+};
 
 console.log('[participants.config] Loaded', window.ENTRY_IDS.length, 'entry IDs');
 console.log('[participants.config] League code:', window.LEAGUE_CODE);
+console.log('[participants.config] Participant overrides:', Object.keys(window.PARTICIPANT_OVERRIDES).length, 'entries');

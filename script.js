@@ -63,6 +63,27 @@ function getKnownEntryIds() {
   return Array.from(new Set(a.map(n => Number(n)).filter(Boolean)));
 }
 
+// Helper function to apply participant overrides
+function applyParticipantOverride(id, fromSummary = {}) {
+  const o = (window.PARTICIPANT_OVERRIDES && window.PARTICIPANT_OVERRIDES[id]) || {};
+  const first = fromSummary?.player_first_name || '';
+  const last  = fromSummary?.player_last_name  || '';
+  const displayNameFromAPI = (first || last) ? `${first} ${last}`.trim() : '';
+  return {
+    displayName: o.displayName || displayNameFromAPI || `Manager ${id}`,
+    teamName:    o.teamName    || fromSummary?.name || '',
+  };
+}
+
+// Safe picks response normalizer
+function normalizePicksResponse(rec){
+  const data = rec?.data || rec || {};
+  return {
+    entry_history: data.entry_history || null,
+    picks: Array.isArray(data.picks) ? data.picks : [],
+  };
+}
+
 // Helper function to update ENTRY_IDS from participantsData (legacy - now handled by config)
 function updateEntryIds() {
     // This function is kept for backward compatibility but ENTRY_IDS are now managed by participants.config.js
@@ -1659,12 +1680,10 @@ async function buildParticipantsFromAggregates(entryIds){
   const res = await fetchAggregateSummaries(entryIds);
   return res.map(r=>{
     if (r.ok && r.data){
-      const fn=r.data?.player_first_name||'', ln=r.data?.player_last_name||'';
-      const displayName = (fn||ln)?`${fn} ${ln}`.trim():`Manager ${r.id}`;
-      const teamName = r.data?.name || undefined;
-      return { fplId:r.id, displayName, teamName };
+      const override = applyParticipantOverride(r.id, r.data);
+      return { fplId:r.id, displayName: override.displayName, teamName: override.teamName };
     }
-    return { fplId:r.id, displayName:`Manager ${r.id}` };
+    return { fplId:r.id, displayName:`Manager ${r.id}`, teamName: '' };
   });
 }
 
@@ -1739,25 +1758,23 @@ async function ensureParticipantsData() {
   const res = await fetchAggregateSummaries(ids);
   console.log('Aggregate summaries result:', res);
   
-  // Update the global participantsData array with aggregate data
-  participantsData.length = 0;
-  participantsData.push(...res.map(r => {
-    const first = r?.data?.player_first_name || '';
-    const last  = r?.data?.player_last_name  || '';
-    const displayName = (first || last) ? `${first} ${last}`.trim() : `Manager ${r.id}`;
-    return { 
-      fplId: r.id, 
-      namn: displayName,
-      displayName, 
-      teamName: r?.data?.name || '',
-      totalPoäng: 2000, // Default value
-      favoritlag: '',
-      profilRoast: 'Ny deltagare - välkommen!',
-      image: generateAvatarDataURL(displayName.charAt(0)),
-      lastSeasonRank: 'N/A',
-      bestGameweek: 0
-    };
-  }));
+            // Update the global participantsData array with aggregate data
+          participantsData.length = 0;
+          participantsData.push(...res.map(r => {
+            const override = applyParticipantOverride(r.id, r?.data);
+            return {
+              fplId: r.id,
+              namn: override.displayName,
+              displayName: override.displayName,
+              teamName: override.teamName,
+              totalPoäng: 2000, // Default value
+              favoritlag: '',
+              profilRoast: 'Ny deltagare - välkommen!',
+              image: generateAvatarDataURL(override.displayName.charAt(0)),
+              lastSeasonRank: 'N/A',
+              bestGameweek: 0
+            };
+          }));
   
   console.log('Updated participantsData from aggregates:', participantsData);
 }
@@ -2715,9 +2732,10 @@ async function testAPIConnection() {
         
         if (picksTest.ok) {
             const picksData = await picksTest.json();
+            const safe = normalizePicksResponse(picksData);
             console.log('🧪 Picks test successful:', {
-                gameweek: picksData.entry_history.event,
-                points: picksData.entry_history.points
+                gameweek: safe.entry_history?.event ?? 'unknown',
+                points: safe.entry_history?.points ?? 'unknown'
             });
         } else {
             console.log('⚠️ Picks API returned status:', picksTest.status, '- this may be normal for new season');
@@ -3517,12 +3535,13 @@ async function generateRealRoasts() {
     for (const participant of allParticipants) {
         const picksResult = await getPicksCached(participant.fplId, currentGameweek);
         if (picksResult && picksResult.status === 'ok' && picksResult.data) {
-            const gwPoints = picksResult.data.entry_history.points;
-            const captain = picksResult.data.picks.find(pick => pick.is_captain);
+            const safe = normalizePicksResponse(picksResult.data);
+            const gwPoints = safe.entry_history?.points ?? 0;
+            const captain = safe.picks.find(pick => pick.is_captain);
             const captainPoints = captain ? captain.points * captain.multiplier : 0;
-            const benchPoints = picksResult.data.picks.filter(pick => pick.position > 11).reduce((sum, pick) => sum + (pick.multiplier > 0 ? pick.points : 0), 0);
-            const transfers = picksResult.data.entry_history.event_transfers;
-            const transferCost = picksResult.data.entry_history.event_transfers_cost;
+            const benchPoints = safe.picks.filter(pick => pick.position > 11).reduce((sum, pick) => sum + (pick.multiplier > 0 ? pick.points : 0), 0);
+            const transfers = safe.entry_history?.event_transfers ?? 0;
+            const transferCost = safe.entry_history?.event_transfers_cost ?? 0;
             
             roastStats.push({
                 participant,
@@ -3863,6 +3882,18 @@ window.testScriptLoaded = function() {
 
 // One-liner to verify wiring
 console.log('build', window.__BUILD_TAG__, 'ENTRY_IDS', (window.ENTRY_IDS||[]).length);
+
+// Diagnostics for unresolved IDs (dev-only)
+window.__diagNames = function(){
+  const ids = Array.isArray(window.ENTRY_IDS) ? window.ENTRY_IDS : [];
+  const missing = [];
+  for (const id of ids) {
+    const o = window.PARTICIPANT_OVERRIDES?.[id];
+    if (!o || !o.displayName) missing.push(id);
+  }
+  console.info('[Names] overrides:', Object.keys(window.PARTICIPANT_OVERRIDES||{}).length,
+               'ENTRY_IDS:', ids.length, 'missing names for ids:', missing.slice(0,20));
+};
 
 // Add direct admin access that doesn't rely on function exports
 window.adminLogin = function() {
