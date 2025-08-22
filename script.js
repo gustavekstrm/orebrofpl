@@ -1688,18 +1688,109 @@ async function buildParticipantsFromAggregates(entryIds){
   });
 }
 
+// Canonical row shape used by both tables
+// {
+//   fplId: number,
+//   displayName: string,
+//   teamName: string,
+//   gwPoints: number|null,     // points for current GW
+//   totalPoints: number|null,  // overall points (if available)
+//   privateOrBlocked: boolean, // true if we had to fall back / no data
+//   summary?: object,          // raw entry summary (optional)
+//   history?: object           // raw history for the gw (optional)
+// }
+
+// Normalizer that merges aggregate/summary + aggregate/history for a given GW
+function normalizeAggregateRows(summaries, histories, gw) {
+  const ids = Array.isArray(window.ENTRY_IDS) ? window.ENTRY_IDS.map(Number) : [];
+  const byId = new Map();
+
+  const resultsS = Array.isArray(summaries?.results) ? summaries.results : [];
+  for (const r of resultsS) {
+    const id = Number(r?.id);
+    if (!Number.isFinite(id)) continue;
+    const api = r?.data || {};
+    const ov  = applyParticipantOverride(id, api);
+    // Try common total/overall fields from FPL summary:
+    const total =
+      api?.summary_overall_points ??
+      api?.summary_event_points ?? // fallback if overall missing
+      null;
+
+    byId.set(id, {
+      fplId: id,
+      displayName: ov.displayName,
+      teamName: ov.teamName,
+      gwPoints: null,
+      totalPoints: total,
+      privateOrBlocked: false,
+      summary: api
+    });
+  }
+
+  const resultsH = Array.isArray(histories?.results) ? histories.results : [];
+  for (const r of resultsH) {
+    const id = Number(r?.id);
+    if (!Number.isFinite(id)) continue;
+    const api = r?.data || {};
+    const cur = Array.isArray(api.current) ? api.current : [];
+    const row = cur.find(x => x?.event === gw) || null;
+
+    const gwPoints =
+      (row && (row.points ?? row.total_points)) ??
+      (typeof r?.gwPoints === 'number' ? r.gwPoints : null);
+
+    // ensure presence
+    if (!byId.has(id)) {
+      const ov = applyParticipantOverride(id, {});
+      byId.set(id, {
+        fplId: id,
+        displayName: ov.displayName,
+        teamName: ov.teamName,
+        gwPoints: null,
+        totalPoints: null,
+        privateOrBlocked: true
+      });
+    }
+    const obj = byId.get(id);
+    obj.gwPoints = gwPoints ?? obj.gwPoints ?? 0;
+    obj.history  = api;
+    // if we had to synthesize, keep privateOrBlocked = true
+  }
+
+  // Return rows in ENTRY_IDS order, filling gaps
+  return ids.map(id => {
+    if (byId.has(id)) return byId.get(id);
+    const ov = applyParticipantOverride(id, {});
+    return {
+      fplId: id,
+      displayName: ov.displayName,
+      teamName: ov.teamName,
+      gwPoints: 0,
+      totalPoints: 0,
+      privateOrBlocked: true
+    };
+  });
+}
+
 // Tables loader (aggregates only; no /picks)
 async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
   console.info('[Tables] Using aggregates only. No picks will be fetched here.');
-  const participants = await buildParticipantsFromAggregates(entryIds);
-  const hist = await fetchAggregateHistory(entryIds, gw);
-  const byId = new Map(hist.map(h=>[h.id,h]));
-
-  const rows = participants.map(p=>{
-    const h = byId.get(p.fplId);
-    const gwPoints = (h && h.ok) ? (h.points ?? null) : null;
-    return { id:p.fplId, displayName:p.displayName, teamName:p.teamName, gwPoints, privateOrBlocked: !h || !h.ok };
-  });
+  
+  // Fetch aggregate data
+  const summaries = await fetchAggregateSummaries(entryIds);
+  const histories = await fetchAggregateHistory(entryIds, gw);
+  
+  // Debug flag & one-shot logs (dev only; no UI change)
+  const DEBUG_AGG = true; // set to false later
+  if (DEBUG_AGG) {
+    console.info('[Agg] summaries sample:', summaries?.results?.slice(0,1)[0]);
+    console.info('[Agg] histories sample:', histories?.results?.slice(0,1)[0]);
+  }
+  
+  // Normalize into canonical row shape
+  const rows = normalizeAggregateRows(summaries, histories, gw);
+  console.info('[Tables] normalized sample:', rows.slice(0,3));
 
   // reuse existing renderers (unchanged UI)
   populateSeasonTable?.(rows, bootstrap);
@@ -3099,22 +3190,33 @@ function populateSeasonTable(rows, bootstrap) {
     
     tbody.innerHTML = '';
     
-    // Sort by total points (descending) - for now use GW points as proxy
-    const sortedRows = [...rows].sort((a, b) => (b.gwPoints || 0) - (a.gwPoints || 0));
+    // Sort by total points (descending) - use totalPoints if available, fallback to gwPoints
+    const sortedRows = [...rows].sort((a, b) => {
+        const aPoints = a.totalPoints ?? a.gwPoints ?? 0;
+        const bPoints = b.totalPoints ?? b.gwPoints ?? 0;
+        return bPoints - aPoints;
+    });
     
     sortedRows.forEach((player, index) => {
         console.log(`Creating row ${index + 1} for player:`, player);
+        
+        // Ensure displayName with fallback order
+        const displayName = 
+            player.displayName ||
+            (player.summary ? applyParticipantOverride(player.fplId, player.summary).displayName : null) ||
+            `Manager ${player.fplId}`;
+        
         const row = document.createElement('tr');
         row.innerHTML = `
             <td>${index + 1}</td>
-            <td>${player.displayName || `Manager ${player.id}`}</td>
-            <td>${player.gwPoints || 0}</td>
+            <td>${displayName}</td>
+            <td>${player.totalPoints ?? player.gwPoints ?? 0}</td>
             <td>${player.teamName || '—'}</td>
         `;
         
         // Add tooltip for blocked teams
-        if (player.privateOrBlocked && player.id) {
-            markBlockedRow(row, player.id);
+        if (player.privateOrBlocked && player.fplId) {
+            markBlockedRow(row, player.fplId);
         }
         
         tbody.appendChild(row);
@@ -3148,21 +3250,28 @@ function populateGameweekTable(rows, bootstrap) {
     tbody.innerHTML = '';
     
     // Sort by gameweek points (descending)
-    const sortedRows = [...rows].sort((a, b) => (b.gwPoints || 0) - (a.gwPoints || 0));
+    const sortedRows = [...rows].sort((a, b) => (b.gwPoints ?? 0) - (a.gwPoints ?? 0));
     
     sortedRows.forEach((player, index) => {
         console.log(`Creating GW row ${index + 1} for player:`, player);
+        
+        // Ensure displayName with fallback order
+        const displayName = 
+            player.displayName ||
+            (player.summary ? applyParticipantOverride(player.fplId, player.summary).displayName : null) ||
+            `Manager ${player.fplId}`;
+        
         const row = document.createElement('tr');
         row.innerHTML = `
             <td>${index + 1}</td>
-            <td>${player.displayName || `Manager ${player.id}`}</td>
-            <td>${player.gwPoints || 0}</td>
+            <td>${displayName}</td>
+            <td>${player.gwPoints ?? 0}</td>
             <td>${player.teamName || '—'}</td>
         `;
         
         // Add tooltip for blocked teams
-        if (player.privateOrBlocked && player.id) {
-            markBlockedRow(row, player.id);
+        if (player.privateOrBlocked && player.fplId) {
+            markBlockedRow(row, player.fplId);
         }
         
         tbody.appendChild(row);
