@@ -75,6 +75,14 @@ function applyParticipantOverride(id, fromSummary = {}) {
   };
 }
 
+// Helper to extract GW points from history
+function deriveGwPointsFromHistory(historyData, gw) {
+  const cur = Array.isArray(historyData?.current) ? historyData.current : [];
+  const row = cur.find(x => x?.event === gw);
+  // FPL uses `points`; sometimes only `total_points` is present
+  return (row?.points ?? row?.total_points ?? 0);
+}
+
 // Safe picks response normalizer
 function normalizePicksResponse(rec){
   const data = rec?.data || rec || {};
@@ -105,6 +113,7 @@ const PICKS_PACING_MAX_MS = 400;        // was 240 - increased for less pressure
 // Tables must not fetch /picks/ - hard switch
 const EAGER_FETCH_PICKS_FOR_TABLES = false; // DO NOT change design; just disable picks for tables
 const EAGER_FETCH_PICKS = false; // must remain false in production
+const SHOW_PICKS_TOOLTIP_IN_TABLES = false;
 
 // Debug flag for FPL API logging
 const DEBUG_FPL = false; // set true only when debugging
@@ -1662,18 +1671,24 @@ async function safeFetchSummary(entryId) {
   };
 }
 
-async function fetchAggregateSummaries(ids){
-  const out=[]; for(const c of chunk(ids,25)){
-    const d=await fetchJSON(`${API}/aggregate/summary?ids=${c.join(',')}&__=${Date.now()}`);
-    out.push(...(d?.results||[]));
-  } return out;
+async function fetchAggregateSummaries(ids) {
+  const url = `${API}/aggregate/summary?ids=${ids.join(',')}&__=${Date.now()}`;
+  const data = await fetchJSON(url);
+  if (!data || !Array.isArray(data.results)) {
+    console.warn('[Agg] summaries.results missing/empty', data);
+    return { results: [] };
+  }
+  return data;
 }
 
-async function fetchAggregateHistory(ids, gw){
-  const out=[]; for(const c of chunk(ids,25)){
-    const d=await fetchJSON(`${API}/aggregate/history?ids=${c.join(',')}&gw=${gw}&__=${Date.now()}`);
-    out.push(...(d?.results||[]));
-  } return out;
+async function fetchAggregateHistory(ids, gw) {
+  const url = `${API}/aggregate/history?ids=${ids.join(',')}&gw=${gw}&__=${Date.now()}`;
+  const data = await fetchJSON(url);
+  if (!data || !Array.isArray(data.results)) {
+    console.warn('[Agg] histories.results missing/empty', data);
+    return { results: [] };
+  }
+  return data;
 }
 
 // Participants (no "undefined" names)
@@ -1714,8 +1729,8 @@ function normalizeAggregateRows(summaries, histories, gw) {
     // Try common total/overall fields from FPL summary:
     const total =
       api?.summary_overall_points ??
-      api?.summary_event_points ?? // fallback if overall missing
-      null;
+      api?.overall_points ?? // safety alias
+      api?.summary_event_points ?? null;
 
     byId.set(id, {
       fplId: id,
@@ -1733,12 +1748,8 @@ function normalizeAggregateRows(summaries, histories, gw) {
     const id = Number(r?.id);
     if (!Number.isFinite(id)) continue;
     const api = r?.data || {};
-    const cur = Array.isArray(api.current) ? api.current : [];
-    const row = cur.find(x => x?.event === gw) || null;
-
-    const gwPoints =
-      (row && (row.points ?? row.total_points)) ??
-      (typeof r?.gwPoints === 'number' ? r.gwPoints : null);
+    
+    const gwPoints = deriveGwPointsFromHistory(api, gw);
 
     // ensure presence
     if (!byId.has(id)) {
@@ -1753,14 +1764,29 @@ function normalizeAggregateRows(summaries, histories, gw) {
       });
     }
     const obj = byId.get(id);
-    obj.gwPoints = gwPoints ?? obj.gwPoints ?? 0;
+    obj.gwPoints = Number.isFinite(gwPoints) ? gwPoints : 0;
     obj.history  = api;
     // if we had to synthesize, keep privateOrBlocked = true
   }
 
   // Return rows in ENTRY_IDS order, filling gaps
   return ids.map(id => {
-    if (byId.has(id)) return byId.get(id);
+    if (byId.has(id)) {
+      const obj = byId.get(id);
+      // Update totalPoints if we have summary data
+      if (obj.summary) {
+        const total =
+          obj.summary?.summary_overall_points ??
+          obj.summary?.overall_points ?? // safety alias
+          obj.summary?.summary_event_points ?? null;
+        obj.totalPoints = Number.isFinite(total) ? total : (obj.totalPoints ?? 0);
+      }
+      // privateOrBlocked should be true only if both summary and history are missing
+      const rFromSummary = resultsS.find(r => Number(r?.id) === id);
+      const rFromHistory = resultsH.find(r => Number(r?.id) === id);
+      obj.privateOrBlocked = !(rFromSummary || rFromHistory);
+      return obj;
+    }
     const ov = applyParticipantOverride(id, {});
     return {
       fplId: id,
@@ -1791,10 +1817,13 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
   // Normalize into canonical row shape
   const rows = normalizeAggregateRows(summaries, histories, gw);
   console.info('[Tables] normalized sample:', rows.slice(0,3));
+  
+  // Store for debug utilities
+  window.__lastRows = rows;
 
   // reuse existing renderers (unchanged UI)
   populateSeasonTable?.(rows, bootstrap);
-  populateGameweekTable?.(rows, bootstrap);
+  populateGameweekTable?.(rows, bootstrap, gw);
 }
 
 // Hook "Tabeller"
@@ -3188,6 +3217,10 @@ function populateSeasonTable(rows, bootstrap) {
         return;
     }
     
+    // Add debug assert
+    const currentGW = FORCE_GW ?? bootstrap?.events?.find(e => e?.is_current)?.id ?? 1;
+    console.info('[Tables] GW=', currentGW, 'sample row=', rows[0]);
+    
     tbody.innerHTML = '';
     
     // Sort by total points (descending) - use totalPoints if available, fallback to gwPoints
@@ -3210,12 +3243,12 @@ function populateSeasonTable(rows, bootstrap) {
         row.innerHTML = `
             <td>${index + 1}</td>
             <td>${displayName}</td>
-            <td>${player.totalPoints ?? player.gwPoints ?? 0}</td>
+            <td>${player.totalPoints ?? 0}</td>
             <td>${player.teamName || '—'}</td>
         `;
         
-        // Add tooltip for blocked teams
-        if (player.privateOrBlocked && player.fplId) {
+        // Add tooltip for blocked teams (only if enabled for tables)
+        if (SHOW_PICKS_TOOLTIP_IN_TABLES && player.privateOrBlocked && player.fplId) {
             markBlockedRow(row, player.fplId);
         }
         
@@ -3225,7 +3258,7 @@ function populateSeasonTable(rows, bootstrap) {
     console.log('Season table populated with', sortedRows.length, 'rows');
 }
 
-function populateGameweekTable(rows, bootstrap) {
+function populateGameweekTable(rows, bootstrap, currentGW) {
     console.log('=== POPULATE GAMEWEEK TABLE (AGGREGATE) ===');
     console.log('Rows:', rows);
     console.log('Rows length:', rows ? rows.length : 'UNDEFINED');
@@ -3247,6 +3280,10 @@ function populateGameweekTable(rows, bootstrap) {
         return;
     }
     
+    // Add debug assert
+    const gw = currentGW ?? FORCE_GW ?? bootstrap?.events?.find(e => e?.is_current)?.id ?? 1;
+    console.info('[Tables] GW=', gw, 'sample row=', rows[0]);
+    
     tbody.innerHTML = '';
     
     // Sort by gameweek points (descending)
@@ -3265,12 +3302,12 @@ function populateGameweekTable(rows, bootstrap) {
         row.innerHTML = `
             <td>${index + 1}</td>
             <td>${displayName}</td>
+            <td>${gw}</td>
             <td>${player.gwPoints ?? 0}</td>
-            <td>${player.teamName || '—'}</td>
         `;
         
-        // Add tooltip for blocked teams
-        if (player.privateOrBlocked && player.fplId) {
+        // Add tooltip for blocked teams (only if enabled for tables)
+        if (SHOW_PICKS_TOOLTIP_IN_TABLES && player.privateOrBlocked && player.fplId) {
             markBlockedRow(row, player.fplId);
         }
         
@@ -3280,8 +3317,6 @@ function populateGameweekTable(rows, bootstrap) {
     // Update gameweek label
     const gameweekLabel = document.getElementById('currentGameweekLabel');
     if (gameweekLabel) {
-        const current = bootstrap?.events?.find(e => e.is_current) || bootstrap?.events?.[0];
-        const gw = (typeof FORCE_GW === 'number' && FORCE_GW > 0) ? FORCE_GW : (current?.id ?? 1);
         gameweekLabel.textContent = `Gameweek ${gw}`;
     }
     
@@ -4048,6 +4083,11 @@ window.__printState = function(){
   // Quick sample mapping check:
   const sample = ids.slice(0,5).map(id => ({ id, name: (o[id]&&o[id].displayName) || null }));
   console.log('[State] sample overrides:', sample);
+};
+
+// Quick debug utilities
+window.__dumpNormalized = () => {
+  console.log('[Dump] first 3 rows:', (window.__lastRows || []).slice(0,3));
 };
 
 // Add direct admin access that doesn't rely on function exports
