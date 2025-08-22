@@ -104,6 +104,7 @@ const PICKS_PACING_MAX_MS = 400;        // was 240 - increased for less pressure
 
 // Tables must not fetch /picks/ - hard switch
 const EAGER_FETCH_PICKS_FOR_TABLES = false; // DO NOT change design; just disable picks for tables
+const EAGER_FETCH_PICKS = false; // must remain false in production
 
 // Debug flag for FPL API logging
 const DEBUG_FPL = false; // set true only when debugging
@@ -1689,6 +1690,7 @@ async function buildParticipantsFromAggregates(entryIds){
 
 // Tables loader (aggregates only; no /picks)
 async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
+  console.info('[Tables] Using aggregates only. No picks will be fetched here.');
   const participants = await buildParticipantsFromAggregates(entryIds);
   const hist = await fetchAggregateHistory(entryIds, gw);
   const byId = new Map(hist.map(h=>[h.id,h]));
@@ -2160,9 +2162,12 @@ async function updateParticipantsWithFPLData() {
                 console.log(`✅ FPL data received for ${participant.namn}`);
                 
                 // Update with real data while preserving custom fields
+                const override = applyParticipantOverride(participant.fplId, currentData);
                 participantsData[i] = {
                     ...participant, // Keep existing custom data (roasts, image, favoritlag, etc.)
-                    namn: currentData.player_first_name + ' ' + currentData.player_last_name,
+                    namn: override.displayName,
+                    displayName: override.displayName,
+                    teamName: override.teamName,
                     totalPoäng: currentData.summary_overall_points,
                     lastSeasonRank: historyData.past?.find(past => past.season_name === '2023/24')?.rank || 'N/A',
                     bestGameweek: Math.max(...historyData.current.map(gw => gw.points), 0)
@@ -2213,12 +2218,26 @@ async function calculateWeeklyHighlightsFromAPI() {
     
     console.log(`📊 Calculating highlights for ${allParticipants.length} participants`);
     
+    // Note: This function uses picks data - should only be called for detail views, not tables
+    if (!EAGER_FETCH_PICKS) {
+        console.log('⚠️ calculateWeeklyHighlightsFromAPI: picks fetching disabled, using fallback highlights');
+        // Use fallback highlights when picks are disabled
+        leagueData.highlights = {
+            rocket: 'Highlights disabled (no picks)',
+            flop: 'Highlights disabled (no picks)',
+            captain: 'Highlights disabled (no picks)',
+            bench: 'Highlights disabled (no picks)'
+        };
+        return;
+    }
+    
     for (const participant of allParticipants) {
-                        const picksResult = await getPicksCached(participant.fplId, currentGW);
+        const picksResult = await getPicksCached(participant.fplId, currentGW);
         if (picksResult && picksResult.status === 'ok' && picksResult.data) {
-            const gwPoints = picksResult.data.entry_history.points;
-            const captain = picksResult.data.picks.find(pick => pick.is_captain)?.element || null;
-            const benchPoints = picksResult.data.picks.filter(pick => pick.position > 11).reduce((sum, pick) => sum + (pick.multiplier > 0 ? pick.points : 0), 0);
+            const safe = normalizePicksResponse(picksResult.data);
+            const gwPoints = safe.entry_history?.points ?? 0;
+            const captain = safe.picks.find(pick => pick.is_captain)?.element || null;
+            const benchPoints = safe.picks.filter(pick => pick.position > 11).reduce((sum, pick) => sum + (pick.multiplier > 0 ? pick.points : 0), 0);
             
             // Update highlights
             if (gwPoints > gwHighlights.rocket.points) {
@@ -2330,11 +2349,13 @@ async function initializeFPLData() {
             updateHighlightsFromData();
             generateRoastMessages();
             
-            // Idle prefetch of top 4 players for better UX
-            const entryIds = participantsData.filter(p => p.fplId).map(p => p.fplId);
-            if (entryIds.length > 0) {
-                console.log('🔄 Scheduling idle prefetch of top 4 players...');
-                prefetchSomeDetails(entryIds, currentGameweek, 4);
+            // Idle prefetch of top 4 players for better UX (disabled in production)
+            if (EAGER_FETCH_PICKS) {
+                const entryIds = participantsData.filter(p => p.fplId).map(p => p.fplId);
+                if (entryIds.length > 0) {
+                    console.log('🔄 Scheduling idle prefetch of top 4 players...');
+                    prefetchSomeDetails(entryIds, currentGameweek, 4);
+                }
             }
         }, 100);
         
@@ -2399,20 +2420,10 @@ async function generateLeagueTablesFromAPI() {
     console.log(`🔄 Fetching gameweek ${currentGameweek} data for all participants...`);
     const gwData = [];
     
-    for (const participant of allParticipants) {
-        const picksResult = await getPicksCached(participant.fplId, currentGameweek);
-        if (picksResult && picksResult.status === 'ok' && picksResult.data && picksResult.data.entry_history) {
-            gwData.push({
-                position: 0, // Will be calculated after sorting
-                name: participant.namn,
-                points: picksResult.data.entry_history.points,
-                gameweek: currentGameweek,
-                managerId: participant.fplId
-            });
-            console.log(`✅ Added ${participant.namn} with ${picksResult.data.entry_history.points} points`);
-        } else {
-            console.log(`⚠️ No gameweek data for ${participant.namn} (GW${currentGameweek}) - using season total`);
-            // Use season total points if gameweek data unavailable
+    // Note: This function uses picks data - should only be called for detail views, not tables
+    if (!EAGER_FETCH_PICKS) {
+        console.log('⚠️ generateLeagueTablesFromAPI: picks fetching disabled, using season totals only');
+        for (const participant of allParticipants) {
             gwData.push({
                 position: 0,
                 name: participant.namn,
@@ -2420,6 +2431,30 @@ async function generateLeagueTablesFromAPI() {
                 gameweek: currentGameweek,
                 managerId: participant.fplId
             });
+        }
+    } else {
+        for (const participant of allParticipants) {
+            const picksResult = await getPicksCached(participant.fplId, currentGameweek);
+            if (picksResult && picksResult.status === 'ok' && picksResult.data && picksResult.data.entry_history) {
+                gwData.push({
+                    position: 0, // Will be calculated after sorting
+                    name: participant.namn,
+                    points: picksResult.data.entry_history.points,
+                    gameweek: currentGameweek,
+                    managerId: participant.fplId
+                });
+                console.log(`✅ Added ${participant.namn} with ${picksResult.data.entry_history.points} points`);
+            } else {
+                console.log(`⚠️ No gameweek data for ${participant.namn} (GW${currentGameweek}) - using season total`);
+                // Use season total points if gameweek data unavailable
+                gwData.push({
+                    position: 0,
+                    name: participant.namn,
+                    points: participant.totalPoäng || 0,
+                    gameweek: currentGameweek,
+                    managerId: participant.fplId
+                });
+            }
         }
     }
     
@@ -3893,6 +3928,17 @@ window.__diagNames = function(){
   }
   console.info('[Names] overrides:', Object.keys(window.PARTICIPANT_OVERRIDES||{}).length,
                'ENTRY_IDS:', ids.length, 'missing names for ids:', missing.slice(0,20));
+};
+
+// State printer for quick verification
+window.__printState = function(){
+  const ids = Array.isArray(window.ENTRY_IDS) ? window.ENTRY_IDS : [];
+  const o   = window.PARTICIPANT_OVERRIDES || {};
+  console.log('[State] ENTRY_IDS len:', ids.length, 'first10:', ids.slice(0,10));
+  console.log('[State] overrides count:', Object.keys(o).length);
+  // Quick sample mapping check:
+  const sample = ids.slice(0,5).map(id => ({ id, name: (o[id]&&o[id].displayName) || null }));
+  console.log('[State] sample overrides:', sample);
 };
 
 // Add direct admin access that doesn't rely on function exports
