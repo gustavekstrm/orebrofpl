@@ -47,6 +47,20 @@ const ADMIN_PASSWORD = 'Pepsie10';
 const FPL_API_BASE = 'https://fpl-proxy-1.onrender.com/api';
 const FPL_PROXY_BASE = FPL_API_BASE;
 
+// Build banner
+console.info('[ÖrebroFPL] build v2.1 – tables=aggregate-only, picks=details-only, season=2025/26');
+
+// Dev sentinel to detect picks calls outside details
+(function hookFetchForTablesGuard(){
+  const orig = window.fetch;
+  window.fetch = function(url, opts){
+    if (typeof url === 'string' && /\/api\/.*\/picks/i.test(url)) {
+      console.warn('[Sentinel] picks fetch detected outside details:', url);
+    }
+    return orig.apply(this, arguments);
+  };
+})();
+
 // Global variables for aggregate endpoints
 // window.LEAGUE_CODE and window.ENTRY_IDS are now set by participants.config.js
 
@@ -78,9 +92,45 @@ function applyParticipantOverride(id, fromSummary = {}) {
 // Helper to extract GW points from history
 function deriveGwPointsFromHistory(historyData, gw) {
   const cur = Array.isArray(historyData?.current) ? historyData.current : [];
-  const row = cur.find(x => x?.event === gw);
-  // FPL uses `points`; sometimes only `total_points` is present
-  return (row?.points ?? row?.total_points ?? 0);
+  const row = cur.find(x => Number(x?.event) === Number(gw));
+  const pts = Number(row?.points);
+  return Number.isFinite(pts) ? pts : 0;
+}
+
+// Helper to compute total points from summary and history
+function deriveTotalPoints(summaryApi, historyApi) {
+  // Support multiple field names seen in different payloads
+  const cands = [
+    summaryApi?.summary_overall_points,
+    summaryApi?.overall_points,
+    historyApi?.current?.length ? historyApi.current[historyApi.current.length-1]?.overall_points : null,
+  ].map(Number);
+  const val = cands.find(n => Number.isFinite(n));
+  return Number.isFinite(val) ? val : 0;
+}
+
+// Helper to compute season label
+function computeSeasonLabel() {
+  // Use bootstrap->events or fallback to calendar
+  const now = new Date();
+  const y = now.getMonth() >= 6 ? now.getFullYear() : now.getFullYear() - 1; // Jul–Jun cycle
+  return `${y}/${(y+1).toString().slice(-2)}`;
+}
+
+// Helper to resolve current GW from bootstrap or FORCE_GW
+async function resolveCurrentGW() {
+  if (typeof FORCE_GW === 'number' && FORCE_GW > 0) {
+    return FORCE_GW;
+  }
+  
+  try {
+    const bootstrap = await safeFetchBootstrap();
+    const current = (bootstrap?.events || []).find(e => e?.is_current) || (bootstrap?.events || [])[0];
+    return current?.id || 1;
+  } catch (e) {
+    console.warn('[GW] Failed to resolve current GW, using fallback:', e);
+    return 1;
+  }
 }
 
 // Safe picks response normalizer
@@ -114,6 +164,7 @@ const PICKS_PACING_MAX_MS = 400;        // was 240 - increased for less pressure
 const EAGER_FETCH_PICKS_FOR_TABLES = false; // DO NOT change design; just disable picks for tables
 const EAGER_FETCH_PICKS = false; // must remain false in production
 const SHOW_PICKS_TOOLTIP_IN_TABLES = false;
+const ALLOW_PICKS_IN_TABLES = false;
 
 // Debug flag for FPL API logging
 const DEBUG_FPL = false; // set true only when debugging
@@ -211,6 +262,11 @@ function onIdle(cb, timeout=1200) {
 }
 
 function prefetchSomeDetails(entryIds, gw, max=4) {
+  if (!EAGER_FETCH_PICKS) {
+    console.info('[Prefetch] Disabled by EAGER_FETCH_PICKS flag');
+    return;
+  }
+  
   const subset = entryIds.slice(0, max);
   onIdle(async () => {
     for (const id of subset) {
@@ -222,7 +278,12 @@ function prefetchSomeDetails(entryIds, gw, max=4) {
   });
 }
 
-async function getPicksCached(entryId, gw) {
+async function getPicksCached(entryId, gw, {context='details'} = {}) {
+  if (context !== 'details' && !ALLOW_PICKS_IN_TABLES) {
+    console.warn('[Block] picks call blocked in context:', context);
+    return { status: 'blocked', data: null, history: null };
+  }
+  
   const key = picksKey(entryId, gw);
   const now = Date.now();
 
@@ -363,8 +424,8 @@ function generateAvatarDataURL(initial) {
     }
 }
 
-// 4. Fallback: if fplId is null, continue using mock/manual values
-const participantsData = [
+// 4. Legacy: Renamed to LEGACY_PARTICIPANTS - DO NOT USE (ENTRY_IDS + PARTICIPANT_OVERRIDES from config are single source of truth)
+const LEGACY_PARTICIPANTS = [
     {
         namn: 'Melvin Yuksel',
         totalPoäng: 2456,
@@ -931,8 +992,8 @@ async function updateParticipantsWithFPLData() {
     }
     
     // Update the global participantsData array
-    participantsData.length = 0;
-    participantsData.push(...updatedParticipants);
+            LEGACY_PARTICIPANTS.length = 0;
+        LEGACY_PARTICIPANTS.push(...updatedParticipants);
     
     // Regenerate league data
     useFallbackData();
@@ -1070,18 +1131,18 @@ function populateAdminParticipantsList() {
 }
 
 function updateParticipantField(index, field, value) {
-    if (index >= 0 && index < participantsData.length) {
-        participantsData[index][field] = value;
+    if (index >= 0 && index < LEGACY_PARTICIPANTS.length) {
+        LEGACY_PARTICIPANTS[index][field] = value;
         
         // Update the card styling based on new values
         const card = document.querySelector(`#adminParticipantsList .admin-participant-card:nth-child(${index + 1})`);
         if (card) {
             card.classList.remove('warning', 'error');
             
-            if (!participantsData[index].fplId) {
+            if (!LEGACY_PARTICIPANTS[index].fplId) {
                 card.classList.add('warning');
             }
-            if (!participantsData[index].profilRoast || participantsData[index].profilRoast.trim() === '') {
+            if (!LEGACY_PARTICIPANTS[index].profilRoast || LEGACY_PARTICIPANTS[index].profilRoast.trim() === '') {
                 card.classList.add('error');
             }
         }
@@ -1089,13 +1150,13 @@ function updateParticipantField(index, field, value) {
 }
 
 function saveParticipantChanges(index) {
-    if (index >= 0 && index < participantsData.length) {
+    if (index >= 0 && index < LEGACY_PARTICIPANTS.length) {
         // Update ENTRY_IDS for aggregate endpoints
         updateEntryIds();
         
         // Save to localStorage immediately
         try {
-            localStorage.setItem('fplParticipantsData', JSON.stringify(participantsData));
+            localStorage.setItem('fplParticipantsData', JSON.stringify(LEGACY_PARTICIPANTS));
             
             // Show save confirmation
             const saveButton = document.querySelector(`[onclick="saveParticipantChanges(${index})"]`);
@@ -1125,15 +1186,15 @@ function saveParticipantChanges(index) {
 }
 
 function deleteParticipant(index) {
-    if (confirm(`Är du säker på att du vill ta bort ${participantsData[index].namn}?`)) {
-        participantsData.splice(index, 1);
+    if (confirm(`Är du säker på att du vill ta bort ${LEGACY_PARTICIPANTS[index].namn}?`)) {
+        LEGACY_PARTICIPANTS.splice(index, 1);
         
         // Update ENTRY_IDS for aggregate endpoints
         updateEntryIds();
         
         // Save to localStorage immediately
         try {
-            localStorage.setItem('fplParticipantsData', JSON.stringify(participantsData));
+            localStorage.setItem('fplParticipantsData', JSON.stringify(LEGACY_PARTICIPANTS));
         } catch (error) {
             console.error('Error saving to localStorage:', error);
             alert('Kunde inte spara ändringar. Försök igen.');
@@ -1273,8 +1334,8 @@ function loadFromLocalStorage() {
             const parsedData = JSON.parse(savedData);
             if (Array.isArray(parsedData) && parsedData.length > 0) {
                 // Clear existing data and load from localStorage
-                participantsData.splice(0, participantsData.length, ...parsedData);
-                console.log('Loaded participants data from localStorage:', participantsData.length, 'participants');
+                        LEGACY_PARTICIPANTS.splice(0, LEGACY_PARTICIPANTS.length, ...parsedData);
+        console.log('Loaded participants data from localStorage:', LEGACY_PARTICIPANTS.length, 'participants');
                 
                 // Update ENTRY_IDS for aggregate endpoints
                 updateEntryIds();
@@ -1716,85 +1777,28 @@ async function buildParticipantsFromAggregates(entryIds){
 // }
 
 // Normalizer that merges aggregate/summary + aggregate/history for a given GW
-function normalizeAggregateRows(summaries, histories, gw) {
-  const ids = Array.isArray(window.ENTRY_IDS) ? window.ENTRY_IDS.map(Number) : [];
-  const byId = new Map();
+function normalizeAggregateRows({ ids, summaries, histories, gw }) {
+  const mapSum = new Map(summaries?.results?.map(r => [Number(r?.id), r?.data || {}]) || []);
+  const mapHist = new Map(histories?.results?.map(r => [Number(r?.id), r?.data || {}]) || []);
 
-  const resultsS = Array.isArray(summaries?.results) ? summaries.results : [];
-  for (const r of resultsS) {
-    const id = Number(r?.id);
-    if (!Number.isFinite(id)) continue;
-    const api = r?.data || {};
-    const ov  = applyParticipantOverride(id, api);
-    // Try common total/overall fields from FPL summary:
-    const total =
-      api?.summary_overall_points ??
-      api?.overall_points ?? // safety alias
-      api?.summary_event_points ?? null;
-
-    byId.set(id, {
-      fplId: id,
-      displayName: ov.displayName,
-      teamName: ov.teamName,
-      gwPoints: null,
-      totalPoints: total,
-      privateOrBlocked: false,
-      summary: api
-    });
-  }
-
-  const resultsH = Array.isArray(histories?.results) ? histories.results : [];
-  for (const r of resultsH) {
-    const id = Number(r?.id);
-    if (!Number.isFinite(id)) continue;
-    const api = r?.data || {};
-    
-    const gwPoints = deriveGwPointsFromHistory(api, gw);
-
-    // ensure presence
-    if (!byId.has(id)) {
-      const ov = applyParticipantOverride(id, {});
-      byId.set(id, {
-        fplId: id,
-        displayName: ov.displayName,
-        teamName: ov.teamName,
-        gwPoints: null,
-        totalPoints: null,
-        privateOrBlocked: true
-      });
-    }
-    const obj = byId.get(id);
-    obj.gwPoints = Number.isFinite(gwPoints) ? gwPoints : 0;
-    obj.history  = api;
-    // if we had to synthesize, keep privateOrBlocked = true
-  }
-
-  // Return rows in ENTRY_IDS order, filling gaps
   return ids.map(id => {
-    if (byId.has(id)) {
-      const obj = byId.get(id);
-      // Update totalPoints if we have summary data
-      if (obj.summary) {
-        const total =
-          obj.summary?.summary_overall_points ??
-          obj.summary?.overall_points ?? // safety alias
-          obj.summary?.summary_event_points ?? null;
-        obj.totalPoints = Number.isFinite(total) ? total : (obj.totalPoints ?? 0);
-      }
-      // privateOrBlocked should be true only if both summary and history are missing
-      const rFromSummary = resultsS.find(r => Number(r?.id) === id);
-      const rFromHistory = resultsH.find(r => Number(r?.id) === id);
-      obj.privateOrBlocked = !(rFromSummary || rFromHistory);
-      return obj;
-    }
-    const ov = applyParticipantOverride(id, {});
+    const fplId = Number(id);
+    const sum = mapSum.get(fplId) || {};
+    const hist = mapHist.get(fplId) || {};
+
+    const override = applyParticipantOverride(fplId, sum);
+    const displayName = override.displayName || [sum.player_first_name, sum.player_last_name].filter(Boolean).join(' ') || `Manager ${fplId}`;
+    const teamName    = override.teamName || sum.name || '';
+
     return {
-      fplId: id,
-      displayName: ov.displayName,
-      teamName: ov.teamName,
-      gwPoints: 0,
-      totalPoints: 0,
-      privateOrBlocked: true
+      fplId,
+      displayName,
+      teamName,              // used only in Season table "Team" column
+      gwPoints: deriveGwPointsFromHistory(hist, gw),
+      totalPoints: deriveTotalPoints(sum, hist),
+      summary: sum,
+      history: hist,
+      privateOrBlocked: !hist?.current && !sum?.player_first_name, // heuristic
     };
   });
 }
@@ -1815,7 +1819,7 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
   }
   
   // Normalize into canonical row shape
-  const rows = normalizeAggregateRows(summaries, histories, gw);
+  const rows = normalizeAggregateRows({ ids: entryIds, summaries, histories, gw });
   console.info('[Tables] normalized sample:', rows.slice(0,3));
   
   // Store for debug utilities
@@ -1830,21 +1834,10 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
 async function onClickTabeller(){
   if (window.__loadingTables) return; window.__loadingTables=true;
   try{
+    const ids = getKnownEntryIds();                // from ENTRY_IDS only
+    const gw  = await resolveCurrentGW();          // from bootstrap or FORCE_GW
     const bootstrap = await safeFetchBootstrap();
-    const current = (bootstrap?.events||[]).find(e=>e.is_current) || (bootstrap?.events||[])[0];
-    const gw = (typeof FORCE_GW==='number'&&FORCE_GW>0)?FORCE_GW:(current?.id??1);
-
-    const ids = Array.from(new Set(
-      (Array.isArray(window.ENTRY_IDS)?window.ENTRY_IDS:[])
-        .map(n=>Number(n)).filter(Boolean)
-    ));
-
-    // fallback: derive IDs from league once if needed
-    if (!ids.length && window.LEAGUE_CODE){
-      const s=await fetchJSON(`${API}/leagues-classic/${window.LEAGUE_CODE}/standings/?page_new_entries=1&page_standings=1&phase=1&__=${Date.now()}`);
-      ids.push(...(s?.standings?.results||[]).map(r=>r.entry).filter(Boolean));
-    }
-
+    
     await loadTablesViewUsingAggregates(ids, gw, bootstrap);
   } finally { window.__loadingTables=false; }
 }
@@ -1854,8 +1847,8 @@ window.onClickTabeller = onClickTabeller;
 // Participants (Deltagare) should build from aggregates if empty
 async function ensureParticipantsData() {
   // Use existing participantsData if available
-  if (Array.isArray(participantsData) && participantsData.length > 0) {
-    console.log('Using existing participantsData:', participantsData.length, 'participants');
+      if (Array.isArray(LEGACY_PARTICIPANTS) && LEGACY_PARTICIPANTS.length > 0) {
+        console.log('Using existing LEGACY_PARTICIPANTS:', LEGACY_PARTICIPANTS.length, 'participants');
     return;
   }
 
@@ -1881,8 +1874,8 @@ async function ensureParticipantsData() {
   console.log('Aggregate summaries result:', res);
   
             // Update the global participantsData array with aggregate data
-          participantsData.length = 0;
-          participantsData.push(...res.map(r => {
+                      LEGACY_PARTICIPANTS.length = 0;
+            LEGACY_PARTICIPANTS.push(...res.map(r => {
             const override = applyParticipantOverride(r.id, r?.data);
             return {
               fplId: r.id,
@@ -1915,8 +1908,8 @@ window.__diag = async function() {
   console.log('=== DIAGNOSTICS ===');
   console.log('ENTRY_IDS:', window.ENTRY_IDS);
   console.log('LEAGUE_CODE:', window.LEAGUE_CODE);
-  console.log('participantsData length:', participantsData.length);
-  console.log('First 3 participants:', participantsData.slice(0, 3));
+  console.log('LEGACY_PARTICIPANTS length:', LEGACY_PARTICIPANTS.length);
+  console.log('First 3 participants:', LEGACY_PARTICIPANTS.slice(0, 3));
   
   try {
     const ids = getKnownEntryIds();
@@ -2066,7 +2059,7 @@ async function processPicksResults(results, bootstrap) {
     
     // Process each result
     for (const result of results) {
-        const participant = participantsData.find(p => p.fplId === result.id);
+        const participant = LEGACY_PARTICIPANTS.find(p => p.fplId === result.id);
         if (!participant) continue;
         
         let gameweekPoints = 0;
@@ -2262,7 +2255,7 @@ async function updateParticipantsWithFPLData() {
     console.log('Initial participantsData:', participantsData);
     
     // Count participants with FPL IDs
-    const participantsWithFPL = participantsData.filter(p => p.fplId && p.fplId !== null);
+    const participantsWithFPL = LEGACY_PARTICIPANTS.filter(p => p.fplId && p.fplId !== null);
     console.log(`📊 Found ${participantsWithFPL.length} participants with FPL IDs`);
     
     if (participantsWithFPL.length === 0) {
@@ -2270,8 +2263,8 @@ async function updateParticipantsWithFPLData() {
     }
     
     // Update each participant with real FPL data
-    for (let i = 0; i < participantsData.length; i++) {
-        const participant = participantsData[i];
+    for (let i = 0; i < LEGACY_PARTICIPANTS.length; i++) {
+        const participant = LEGACY_PARTICIPANTS[i];
         
         if (participant.fplId && participant.fplId !== null) {
             console.log(`🔄 Updating participant ${participant.namn} with FPL ID ${participant.fplId}`);
@@ -2283,7 +2276,7 @@ async function updateParticipantsWithFPLData() {
                 
                 // Update with real data while preserving custom fields
                 const override = applyParticipantOverride(participant.fplId, currentData);
-                participantsData[i] = {
+                LEGACY_PARTICIPANTS[i] = {
                     ...participant, // Keep existing custom data (roasts, image, favoritlag, etc.)
                     namn: override.displayName,
                     displayName: override.displayName,
@@ -2293,7 +2286,7 @@ async function updateParticipantsWithFPLData() {
                     bestGameweek: Math.max(...historyData.current.map(gw => gw.points), 0)
                 };
                 
-                console.log(`✅ Updated ${participant.namn} with real data:`, participantsData[i]);
+                console.log(`✅ Updated ${participant.namn} with real data:`, LEGACY_PARTICIPANTS[i]);
             } else {
                 console.log(`❌ Failed to fetch FPL data for ${participant.namn} (ID: ${participant.fplId})`);
                 // In API-only mode, we should throw an error if we can't fetch data
@@ -2306,9 +2299,9 @@ async function updateParticipantsWithFPLData() {
     }
     
     // Save updated data to localStorage
-    localStorage.setItem('fplParticipantsData', JSON.stringify(participantsData));
+    localStorage.setItem('fplParticipantsData', JSON.stringify(LEGACY_PARTICIPANTS));
     console.log('💾 Participants data updated and saved to localStorage');
-    console.log('📊 Final participantsData:', participantsData);
+    console.log('📊 Final LEGACY_PARTICIPANTS:', LEGACY_PARTICIPANTS);
 }
 
 // Function to calculate weekly highlights from real FPL data - API-Only Mode
@@ -2330,7 +2323,7 @@ async function calculateWeeklyHighlightsFromAPI() {
     };
     
     // Get all participants (should all have FPL IDs in API-only mode)
-    const allParticipants = participantsData.filter(p => p.fplId && p.fplId !== null);
+    const allParticipants = LEGACY_PARTICIPANTS.filter(p => p.fplId && p.fplId !== null);
     
     if (allParticipants.length === 0) {
         throw new Error('No participants with FPL IDs found. Cannot calculate highlights.');
@@ -2441,7 +2434,7 @@ async function initializeFPLData() {
         
         // Step 3: Batch load picks with fallback to history
         console.log('🔄 Step 3: Batch loading picks with fallback to history...');
-        const entryIds = participantsData.filter(p => p.fplId).map(p => p.fplId);
+        const entryIds = LEGACY_PARTICIPANTS.filter(p => p.fplId).map(p => p.fplId);
         console.log(`📊 Loading data for ${entryIds.length} participants...`);
         
         const results = await loadAllPicksWithFallback(entryIds, currentGameweek);
@@ -2456,7 +2449,7 @@ async function initializeFPLData() {
         
         console.log('✅ FPL API data loaded successfully with throttling!');
         console.log('📊 Final leagueData:', leagueData);
-        console.log('👥 Final participantsData:', participantsData);
+        console.log('👥 Final LEGACY_PARTICIPANTS:', LEGACY_PARTICIPANTS);
         
         // Update data source indicator
         updateDataSourceIndicator('🌐 Live FPL Data (via Render Proxy)', '#10b981', '#000');
@@ -2471,7 +2464,7 @@ async function initializeFPLData() {
             
             // Idle prefetch of top 4 players for better UX (disabled in production)
             if (EAGER_FETCH_PICKS) {
-                const entryIds = participantsData.filter(p => p.fplId).map(p => p.fplId);
+                const entryIds = LEGACY_PARTICIPANTS.filter(p => p.fplId).map(p => p.fplId);
                 if (entryIds.length > 0) {
                     console.log('🔄 Scheduling idle prefetch of top 4 players...');
                     prefetchSomeDetails(entryIds, currentGameweek, 4);
@@ -2516,7 +2509,7 @@ async function generateLeagueTablesFromAPI() {
     }
     
     // Get all participants (should all have FPL IDs in API-only mode)
-    const allParticipants = participantsData.filter(p => p.fplId && p.fplId !== null);
+    const allParticipants = LEGACY_PARTICIPANTS.filter(p => p.fplId && p.fplId !== null);
     
     if (allParticipants.length === 0) {
         throw new Error('No participants with FPL IDs found. Cannot generate league tables.');
@@ -2606,18 +2599,18 @@ function useFallbackData() {
     updateDataSourceIndicator(indicatorText, indicatorColor, textColor);
     
     // Try to load from localStorage first if we haven't already
-    if (participantsData.length === 0) {
+    if (LEGACY_PARTICIPANTS.length === 0) {
         console.log('No participants data found, attempting to load from localStorage...');
         loadFromLocalStorage();
     }
     
-    console.log('participantsData length:', participantsData.length);
-    console.log('participantsData:', participantsData);
+    console.log('LEGACY_PARTICIPANTS length:', LEGACY_PARTICIPANTS.length);
+    console.log('LEGACY_PARTICIPANTS:', LEGACY_PARTICIPANTS);
     
     // Validate participantsData
-    if (!participantsData || participantsData.length === 0) {
-        console.error('CRITICAL ERROR: participantsData is empty or undefined!');
-        alert('CRITICAL ERROR: participantsData is empty or undefined!');
+    if (!LEGACY_PARTICIPANTS || LEGACY_PARTICIPANTS.length === 0) {
+        console.error('CRITICAL ERROR: LEGACY_PARTICIPANTS is empty or undefined!');
+        alert('CRITICAL ERROR: LEGACY_PARTICIPANTS is empty or undefined!');
         return;
     }
     
@@ -2630,14 +2623,14 @@ function useFallbackData() {
     
     // Generate fallback data from modular participant data
     leagueData = {
-        seasonTable: participantsData.map((participant, index) => ({
+        seasonTable: LEGACY_PARTICIPANTS.map((participant, index) => ({
             position: index + 1,
             name: participant.namn,
             points: participant.totalPoäng,
             gameweek: currentGameweek,
             managerId: participant.fplId || (123456 + index) // Fallback ID if no FPL ID
         })),
-        gameweekTable: participantsData.map((participant, index) => ({
+        gameweekTable: LEGACY_PARTICIPANTS.map((participant, index) => ({
             position: index + 1,
             name: participant.namn,
             points: Math.floor(Math.random() * 50) + 45, // Mock gameweek points
@@ -2650,7 +2643,7 @@ function useFallbackData() {
             captain: 'Erik Rotsenius - Harry Kane (2 poäng)',
             bench: 'Jakob Gårlin - 15 poäng'
         },
-        players: participantsData.map(participant => ({
+        players: LEGACY_PARTICIPANTS.map(participant => ({
             name: participant.namn,
             image: participant.image,
             points: participant.totalPoäng,
@@ -3091,7 +3084,7 @@ window.showSection = function patchedShowSection(sectionId) {
         const gw = (typeof FORCE_GW === 'number' && FORCE_GW > 0) ? FORCE_GW : (cur.id || 1);
         const ids = Array.from(new Set([
           ...(Array.isArray(window.ENTRY_IDS) ? window.ENTRY_IDS : []),
-          ...(Array.isArray(window.participantsData) ? window.participantsData.map(p => p.fplId) : [])
+          ...(Array.isArray(window.LEGACY_PARTICIPANTS) ? window.LEGACY_PARTICIPANTS.map(p => p.fplId) : [])
         ].map(Number).filter(Boolean)));
         await loadTablesViewUsingAggregates(ids, gw, b);
       })().catch(e => console.error('Tables direct load failed', e));
@@ -3700,7 +3693,7 @@ async function generateRealRoasts() {
     const roasts = [];
     
     // Get all participants (should all have FPL IDs in API-only mode)
-    const allParticipants = participantsData.filter(p => p.fplId && p.fplId !== null);
+    const allParticipants = LEGACY_PARTICIPANTS.filter(p => p.fplId && p.fplId !== null);
     
     if (allParticipants.length === 0) {
         throw new Error('No participants with FPL IDs found. Cannot generate roasts in API-only mode.');
@@ -3980,7 +3973,7 @@ function updateWallOfFameShame() {
 // Generate real fame stats
 function generateRealFameStats() {
     // Count gameweeks over 100 points for each participant
-    const participantStats = participantsData.map(participant => {
+    const participantStats = LEGACY_PARTICIPANTS.map(participant => {
         // For mock data, generate random number of 100+ point gameweeks
         const highScoreWeeks = Math.floor(Math.random() * 8) + 1; // 1-8 weeks
         return {
@@ -4055,7 +4048,7 @@ console.log('=== SCRIPT.JS LOADED COMPLETELY ===');
 window.testScriptLoaded = function() {
     console.log('Script is loaded!');
     console.log('ADMIN_PASSWORD:', ADMIN_PASSWORD);
-    console.log('participantsData length:', participantsData.length);
+    console.log('LEGACY_PARTICIPANTS length:', LEGACY_PARTICIPANTS.length);
     return 'Script loaded successfully';
 };
 
@@ -4088,6 +4081,16 @@ window.__printState = function(){
 // Quick debug utilities
 window.__dumpNormalized = () => {
   console.log('[Dump] first 3 rows:', (window.__lastRows || []).slice(0,3));
+  return (window.__lastRows || []).slice(0,3);
+};
+
+// Self-check for table data
+window.__assertTables = () => {
+  const rows = window.__lastRows || [];
+  const anyNonZeroGW = rows.some(r => r.gwPoints > 0);
+  const anyNonZeroTot = rows.some(r => r.totalPoints > 0);
+  console.info('[Assert] anyNonZeroGW=', anyNonZeroGW, 'anyNonZeroTot=', anyNonZeroTot);
+  return { anyNonZeroGW, anyNonZeroTot };
 };
 
 // Add direct admin access that doesn't rely on function exports
