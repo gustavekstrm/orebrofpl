@@ -91,21 +91,39 @@ function applyParticipantOverride(id, fromSummary = {}) {
 
 // Helper to extract GW points from history
 function deriveGwPointsFromHistory(historyData, gw) {
-  const cur = Array.isArray(historyData?.current) ? historyData.current : [];
-  const row = cur.find(x => Number(x?.event) === Number(gw));
-  const pts = Number(row?.points);
-  return Number.isFinite(pts) ? pts : 0;
+  // Handle different history data structures from API
+  if (historyData?.points !== undefined) {
+    // Direct points from aggregate/history endpoint
+    return Number(historyData.points) || 0;
+  }
+  
+  if (Array.isArray(historyData?.current)) {
+    // Full history data from entry/history endpoint
+    const row = historyData.current.find(x => Number(x?.event) === Number(gw));
+    return Number(row?.points) || 0;
+  }
+  
+  if (historyData?.raw) {
+    // Raw row data from aggregate/history endpoint
+    return Number(historyData.raw?.points) || 0;
+  }
+  
+  return 0;
 }
 
 // Helper to compute total points from summary and history
 function deriveTotalPoints(summaryApi, historyApi) {
   // Support multiple field names seen in different payloads
-  const cands = [
+  const candidates = [
     summaryApi?.summary_overall_points,
     summaryApi?.overall_points,
+    summaryApi?.summary?.overall_points,
+    summaryApi?.summary?.total_points,
+    // From history if summary doesn't have it
     historyApi?.current?.length ? historyApi.current[historyApi.current.length-1]?.overall_points : null,
   ].map(Number);
-  const val = cands.find(n => Number.isFinite(n));
+  
+  const val = candidates.find(n => Number.isFinite(n) && n > 0);
   return Number.isFinite(val) ? val : 0;
 }
 
@@ -125,8 +143,17 @@ async function resolveCurrentGW() {
   
   try {
     const bootstrap = await safeFetchBootstrap();
-    const current = (bootstrap?.events || []).find(e => e?.is_current) || (bootstrap?.events || [])[0];
-    return current?.id || 1;
+    // Find the latest finished GW or current GW
+    const events = bootstrap?.events || [];
+    const current = events.find(e => e?.is_current) || events[events.length - 1];
+    
+    if (current?.id) {
+      console.log('[GW] Resolved current GW:', current.id, 'is_current:', current.is_current);
+      return current.id;
+    }
+    
+    console.warn('[GW] No events found in bootstrap, using fallback');
+    return 1;
   } catch (e) {
     console.warn('[GW] Failed to resolve current GW, using fallback:', e);
     return 1;
@@ -333,7 +360,7 @@ async function ensurePicksForDetail(entryId, gw) {
     // render captain/bench/formation from rec.data
     return { success: true, data: rec.data };
   } else {
-    // render points from rec.history (if available), and show "—" for captain/bench
+    // render points from rec.history (if available), and show "-" for captain/bench
     return { success: false, history: rec.history, error: rec.error };
   }
 }
@@ -937,6 +964,8 @@ const LEGACY_PARTICIPANTS = [
         bestGameweek: 0
     }
 ];
+
+// Legacy participants data - DO NOT USE (ENTRY_IDS + PARTICIPANT_OVERRIDES from config are single source of truth)
 
 // Bootstrap data cache
 
@@ -1779,7 +1808,7 @@ async function buildParticipantsFromAggregates(entryIds){
 // Normalizer that merges aggregate/summary + aggregate/history for a given GW
 function normalizeAggregateRows({ ids, summaries, histories, gw }) {
   const mapSum = new Map(summaries?.results?.map(r => [Number(r?.id), r?.data || {}]) || []);
-  const mapHist = new Map(histories?.results?.map(r => [Number(r?.id), r?.data || {}]) || []);
+  const mapHist = new Map(histories?.results?.map(r => [Number(r?.id), r]) || []);
 
   return ids.map(id => {
     const fplId = Number(id);
@@ -1790,6 +1819,17 @@ function normalizeAggregateRows({ ids, summaries, histories, gw }) {
     const displayName = override.displayName || [sum.player_first_name, sum.player_last_name].filter(Boolean).join(' ') || `Manager ${fplId}`;
     const teamName    = override.teamName || sum.name || '';
 
+    // Debug logging for first few entries
+    if (fplId <= 3) {
+      console.log(`[Normalize] Entry ${fplId}:`, {
+        summary: sum,
+        history: hist,
+        gw,
+        derivedGwPoints: deriveGwPointsFromHistory(hist, gw),
+        derivedTotalPoints: deriveTotalPoints(sum, hist)
+      });
+    }
+
     return {
       fplId,
       displayName,
@@ -1798,7 +1838,7 @@ function normalizeAggregateRows({ ids, summaries, histories, gw }) {
       totalPoints: deriveTotalPoints(sum, hist),
       summary: sum,
       history: hist,
-      privateOrBlocked: !hist?.current && !sum?.player_first_name, // heuristic
+      privateOrBlocked: !hist?.ok && !sum?.player_first_name, // heuristic
     };
   });
 }
@@ -1806,6 +1846,7 @@ function normalizeAggregateRows({ ids, summaries, histories, gw }) {
 // Tables loader (aggregates only; no /picks)
 async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
   console.info('[Tables] Using aggregates only. No picks will be fetched here.');
+  console.info('[Tables] Entry IDs:', entryIds.slice(0, 5), 'GW:', gw);
   
   // Fetch aggregate data
   const summaries = await fetchAggregateSummaries(entryIds);
@@ -1816,6 +1857,8 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
   if (DEBUG_AGG) {
     console.info('[Agg] summaries sample:', summaries?.results?.slice(0,1)[0]);
     console.info('[Agg] histories sample:', histories?.results?.slice(0,1)[0]);
+    console.info('[Agg] summaries count:', summaries?.results?.length);
+    console.info('[Agg] histories count:', histories?.results?.length);
   }
   
   // Normalize into canonical row shape
@@ -1824,6 +1867,17 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
   
   // Store for debug utilities
   window.__lastRows = rows;
+  
+  // Add debug dump for inspection
+  window.__DEBUG_FPL = {
+    latestRowSample: rows[0],
+    apiSamples: {
+      summaries: summaries?.results?.slice(0, 2),
+      histories: histories?.results?.slice(0, 2),
+      gw,
+      entryIds: entryIds.slice(0, 5)
+    }
+  };
 
   // reuse existing renderers (unchanged UI)
   populateSeasonTable?.(rows, bootstrap);

@@ -1,0 +1,150 @@
+# FPL ÖREBRO - Data Flow Fixes
+
+## Overview
+
+Fixed critical data flow issues where tables showed participant names but totals and latest GW points were incorrect (showing 0 and 1 respectively).
+
+## Issues Identified & Fixed
+
+### 1. Field Mapping Mismatches
+
+**Problem**: API responses used different field names than frontend expected
+
+- API returned `summary_overall_points` but frontend expected `totalPoints`
+- API returned `points` for GW data but frontend expected `gwPoints`
+
+**Fix**: Updated `deriveTotalPoints()` and `deriveGwPointsFromHistory()` functions to handle multiple field name variations and properly map API responses.
+
+### 2. History Data Structure Handling
+
+**Problem**: Different history endpoints returned data in different formats
+
+- `/aggregate/history` returns `{ points, raw }`
+- `/entry/{id}/history` returns `{ current: [{ event, points }] }`
+
+**Fix**: Enhanced `deriveGwPointsFromHistory()` to handle multiple data structures and extract points correctly.
+
+### 3. Current GW Detection
+
+**Problem**: Tables hardcoded to show GW 1 instead of actual current GW
+
+**Fix**: Improved `resolveCurrentGW()` function to:
+
+- Find the latest finished GW or current GW from bootstrap data
+- Properly update gameweek labels in tables
+- Add logging for debugging
+
+### 4. Data Normalization
+
+**Problem**: Normalization function didn't properly map history data structure
+
+**Fix**: Updated `normalizeAggregateRows()` to:
+
+- Correctly map history data from aggregate endpoints
+- Add debug logging for first few entries
+- Store debug data in `window.__DEBUG_FPL` for inspection
+
+## Data Flow Pipeline
+
+```
+1. Entry IDs from participants.config.js
+   ↓
+2. fetchAggregateSummaries(ids) → /api/aggregate/summary
+   ↓
+3. fetchAggregateHistory(ids, gw) → /api/aggregate/history
+   ↓
+4. normalizeAggregateRows() → maps API fields to frontend fields
+   ↓
+5. populateSeasonTable() & populateGameweekTable() → renders data
+```
+
+## Key Functions Updated
+
+### `deriveTotalPoints(summaryApi, historyApi)`
+
+- Handles multiple field names: `summary_overall_points`, `overall_points`, `summary.overall_points`, `summary.total_points`
+- Falls back to history data if summary doesn't have totals
+- Returns 0 only if no valid data found
+
+### `deriveGwPointsFromHistory(historyData, gw)`
+
+- Handles direct `points` field from aggregate/history
+- Handles `current` array from full history endpoint
+- Handles `raw` data from aggregate/history
+- Returns 0 only if no valid data found
+
+### `resolveCurrentGW()`
+
+- Finds latest finished GW or current GW from bootstrap events
+- Adds logging for debugging
+- Falls back to GW 1 only if bootstrap fails
+
+### `normalizeAggregateRows()`
+
+- Properly maps history data structure
+- Adds debug logging for first 3 entries
+- Creates `window.__DEBUG_FPL` object for inspection
+
+## Testing
+
+1. **Load the page** and check console for any errors
+2. **Click "Tabeller"** button to load tables
+3. **Check console** for debug output:
+   - `[Tables] Entry IDs: [...] GW: X`
+   - `[Agg] summaries sample: {...}`
+   - `[Agg] histories sample: {...}`
+   - `[Normalize] Entry X: {...}`
+4. **Inspect `window.__DEBUG_FPL`** object for API response samples
+
+## Expected Results
+
+- **Totalpoäng column**: Shows actual season totals from API
+- **Senaste Gameweek column**: Shows actual latest GW points (not hardcoded 1)
+- **GW label**: Updates to show actual current GW
+- **Sorting**: Works numerically on both columns
+- **No silent zeros**: All data properly mapped from API
+
+## Debug Objects
+
+### `window.__DEBUG_FPL`
+
+Contains latest normalized row sample and API response samples for debugging:
+
+```javascript
+{
+  latestRowSample: { fplId, displayName, totalPoints, gwPoints, ... },
+  apiSamples: {
+    summaries: [...],
+    histories: [...],
+    gw: X,
+    entryIds: [...]
+  }
+}
+```
+
+### `window.__lastRows`
+
+Contains the last normalized rows passed to table renderers.
+
+## API Endpoints Used
+
+- **`/api/aggregate/summary?ids=1,2,3`** - Batch entry summaries
+- **`/api/aggregate/history?ids=1,2,3&gw=X`** - Batch GW history
+- **`/api/bootstrap-static/`** - Current GW and season info
+
+## Field Mappings
+
+| Frontend Field | API Source          | Field Names                                |
+| -------------- | ------------------- | ------------------------------------------ |
+| `totalPoints`  | Summary             | `summary_overall_points`, `overall_points` |
+| `gwPoints`     | History             | `points`, `current[].points`               |
+| `displayName`  | Summary + Overrides | `player_first_name`, `player_last_name`    |
+| `teamName`     | Summary + Overrides | `name`                                     |
+
+## Notes
+
+- Tables are aggregates-only (no picks data)
+- Legacy participants data commented out but preserved
+- Debug logging enabled for development
+- All functions handle missing/partial data gracefully
+- Current GW detection prioritizes finished GWs over current GW
