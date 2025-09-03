@@ -69,55 +69,85 @@ jobs:
               fs.mkdirSync('data');
             }
             
-            // Save bootstrap data
+            // Save bootstrap data with exact FPL schema (no nesting)
             fs.writeFileSync('data/bootstrap-static.json', JSON.stringify(bootstrap, null, 2));
-            console.log('Bootstrap data saved');
+            console.log('Bootstrap data saved with exact FPL schema');
             
-            // Get entry IDs from config
+            // Get entry IDs from config (same source as frontend)
             const config = require('./participants.config.js');
             const entryIds = config.ENTRY_IDS || [];
             
-            if (entryIds.length > 0) {
-              console.log(\`Fetching history for \${entryIds.length} entries...\`);
-              
-              // Fetch history for each entry (with concurrency limit)
-              const concurrency = 3;
-              const results = {};
-              
-              for (let i = 0; i < entryIds.length; i += concurrency) {
-                const batch = entryIds.slice(i, i + concurrency);
-                const promises = batch.map(async (entryId) => {
-                  const history = await fetchEntryHistory(entryId);
-                  if (history) {
-                    results[entryId] = history;
-                  }
-                  // Rate limiting
-                  await new Promise(resolve => setTimeout(resolve, 200));
-                });
-                
-                await Promise.all(promises);
-                console.log(\`Processed batch \${Math.floor(i/concurrency) + 1}\`);
-              }
-              
-              // Save all history data
-              fs.writeFileSync('data/entry-histories.json', JSON.stringify(results, null, 2));
-              console.log(\`History data saved for \${Object.keys(results).length} entries\`);
+            if (entryIds.length === 0) {
+              console.error('No entry IDs found in participants.config.js');
+              process.exit(1);
             }
             
-            // Create a summary file
-            const summary = {
-              timestamp: new Date().toISOString(),
+            console.log(\`Fetching history for \${entryIds.length} entries...\`);
+            
+            // Create entry directory structure
+            if (!fs.existsSync('data/entry')) {
+              fs.mkdirSync('data/entry', { recursive: true });
+            }
+            
+            // Fetch history for each entry (with concurrency limit)
+            const concurrency = 3;
+            const results = {};
+            const successfulIds = [];
+            
+            for (let i = 0; i < entryIds.length; i += concurrency) {
+              const batch = entryIds.slice(i, i + concurrency);
+              const promises = batch.map(async (entryId) => {
+                try {
+                  const history = await fetchEntryHistory(entryId);
+                  if (history) {
+                    // Save individual entry file with exact FPL schema
+                    const entryPath = \`data/entry/\${entryId}/history.json\`;
+                    fs.writeFileSync(entryPath, JSON.stringify(history, null, 2));
+                    results[entryId] = history;
+                    successfulIds.push(entryId);
+                    console.log(\`Entry \${entryId} saved to \${entryPath}\`);
+                  }
+                } catch (e) {
+                  console.error(\`Failed to fetch/save entry \${entryId}:\`, e.message);
+                }
+                
+                // Rate limiting
+                await new Promise(resolve => setTimeout(resolve, 200));
+              });
+              
+              await Promise.all(promises);
+              console.log(\`Processed batch \${Math.floor(i/concurrency) + 1}\`);
+            }
+            
+            // Create manifest for transparency
+            const manifest = {
+              lastSync: new Date().toISOString(),
+              ids: successfulIds,
+              idsCount: successfulIds.length,
+              sha: process.env.GITHUB_SHA?.substring(0, 7) || 'unknown',
               bootstrap: {
                 events: bootstrap.events?.length || 0,
                 teams: bootstrap.teams?.length || 0,
                 players: bootstrap.elements?.length || 0
               },
-              entries: Object.keys(results).length,
               latestEvent: bootstrap.events?.find(e => e.finished)?.id || 'unknown'
+            };
+            
+            fs.writeFileSync('data/manifest.json', JSON.stringify(manifest, null, 2));
+            console.log('Manifest saved:', manifest);
+            
+            // Create a summary file for backward compatibility
+            const summary = {
+              timestamp: manifest.lastSync,
+              bootstrap: manifest.bootstrap,
+              entries: manifest.idsCount,
+              latestEvent: manifest.latestEvent
             };
             
             fs.writeFileSync('data/summary.json', JSON.stringify(summary, null, 2));
             console.log('Summary saved:', summary);
+            
+            console.log(\`✅ Successfully synced \${successfulIds.length} entries\`);
             
           } catch (e) {
             console.error('Failed to sync FPL data:', e);

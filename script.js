@@ -1,9 +1,16 @@
 // Build information
-const BUILD_SHA = '5d6e7f8'; // Current commit SHA for asset versioning
+const BUILD_SHA = '6f7g8h9'; // Current commit SHA for asset versioning
 const BUILD_BANNER = `[ÖrebroFPL] build ${BUILD_SHA} – tables=aggregate-only`;
 
-// Debug probe to identify CORS/network issues at startup
+// Debug probe to identify CORS/network issues and check fallback data
 async function _debugProbe() {
+  const results = {
+    direct: null,
+    fallback: null,
+    baseUrl: getBaseUrl()
+  };
+  
+  // Test direct FPL API access
   const url = 'https://fantasy.premierleague.com/api/bootstrap-static/';
   try {
     console.log('[PROBE] Testing direct FPL API access...');
@@ -11,11 +18,38 @@ async function _debugProbe() {
     console.log('[PROBE] status=', res.status, 'acao=', res.headers.get('access-control-allow-origin'));
     const j = await res.json();
     console.log('[PROBE] ok, events len=', j?.events?.length);
-    return { success: true, status: res.status, eventsCount: j?.events?.length };
+    results.direct = { success: true, status: res.status, eventsCount: j?.events?.length };
   } catch (e) {
     console.error('[PROBE] bootstrap-static failed:', e?.name, e?.message, e);
-    return { success: false, error: { name: e?.name, message: e?.message } };
+    results.direct = { success: false, error: { name: e?.name, message: e?.message } };
   }
+  
+  // Test fallback data availability
+  try {
+    console.log('[PROBE] Testing fallback data availability...');
+    const manifestUrl = dataUrl('data/manifest.json');
+    console.log('[PROBE] Manifest URL:', manifestUrl);
+    
+    const manifestRes = await fetch(manifestUrl, { cache: 'no-store' });
+    if (manifestRes.ok) {
+      const manifest = await manifestRes.json();
+      console.log('[PROBE] Fallback manifest found:', manifest);
+      results.fallback = {
+        success: true,
+        lastSync: manifest.lastSync,
+        idsCount: manifest.idsCount,
+        latestEvent: manifest.latestEvent
+      };
+    } else {
+      console.warn('[PROBE] Fallback manifest not found:', manifestRes.status);
+      results.fallback = { success: false, status: manifestRes.status };
+    }
+  } catch (e) {
+    console.error('[PROBE] Fallback check failed:', e?.name, e?.message, e);
+    results.fallback = { success: false, error: { name: e?.name, message: e?.message } };
+  }
+  
+  return results;
 }
 
 // Execute debug probe if debug mode enabled
@@ -26,7 +60,30 @@ if (typeof window !== 'undefined' && new URLSearchParams(location.search).get('d
   });
 }
 
-// Unified FPL fetch helper with automatic fallback
+// Robust base resolver for GitHub Pages subpath
+function getBaseUrl() {
+  // Check for <base> tag first
+  const base = document.querySelector('base')?.href;
+  if (base) return base;
+  
+  // Fallback: construct from current location
+  // For GitHub Pages: /username/repo/ -> /username/repo/
+  // For local: / -> /
+  const path = location.pathname;
+  const lastSlashIndex = path.lastIndexOf('/');
+  const basePath = lastSlashIndex > 0 ? path.substring(0, lastSlashIndex + 1) : '/';
+  
+  return location.origin + basePath;
+}
+
+// Fallback data URL resolver with versioning
+function dataUrl(relativePath) {
+  const base = getBaseUrl();
+  const url = new URL(relativePath + `?v=${BUILD_SHA}`, base);
+  return url.toString();
+}
+
+// Unified FPL fetch helper with bulletproof fallback
 async function fplFetch(path, opts = {}) {
   const directUrl = 'https://fantasy.premierleague.com' + path;
   
@@ -49,18 +106,41 @@ async function fplFetch(path, opts = {}) {
   } catch (e) {
     console.warn(`[FPL] Direct fetch failed for ${path}:`, e.name, e.message);
     
-    // Fallback to same-origin data (from GitHub Actions sync)
+    // Bulletproof fallback to same-origin data (from GitHub Actions sync)
     try {
-      const fallbackUrl = `/data${path.replace('/api', '')}.json`;
+      let fallbackPath;
+      
+      if (path === '/api/bootstrap-static/') {
+        fallbackPath = 'data/bootstrap-static.json';
+      } else if (path.startsWith('/api/entry/') && path.endsWith('/history/')) {
+        const entryId = path.match(/\/api\/entry\/(\d+)\/history\//)?.[1];
+        if (entryId) {
+          fallbackPath = `data/entry/${entryId}/history.json`;
+        } else {
+          throw new Error(`Invalid entry path: ${path}`);
+        }
+      } else {
+        throw new Error(`No fallback mapping for path: ${path}`);
+      }
+      
+      const fallbackUrl = dataUrl(fallbackPath);
       console.log(`[FPL] Fallback to same-origin: ${fallbackUrl}`);
       
       const r2 = await fetch(fallbackUrl, { cache: 'no-store' });
       
       if (!r2.ok) {
+        if (r2.status === 404) {
+          throw new Error(`Fallback missing: ${fallbackPath} (404) - GitHub Action may not have synced yet`);
+        }
         throw new Error(`Fallback HTTP ${r2.status}`);
       }
       
-      console.log(`[FPL] Fallback successful: ${path}`);
+      console.log(`[FPL] Fallback successful: ${path} -> ${fallbackPath}`);
+      
+      // Mark response as fallback for debugging
+      r2._isFallback = true;
+      r2._fallbackPath = fallbackPath;
+      
       return r2;
       
     } catch (fallbackError) {
@@ -2237,11 +2317,20 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
       try {
         const season = await resolveCurrentSeason();
         
+        // Determine data source
+        const dataSource = window.__lastRows?.[0]?._isFallback ? 'fallback' : 'direct';
+        
         window.__DEBUG_FPL = {
           participants: validParticipants,
           sampleRow: rows[0],
           season: season,
           gwInfo: { requestedGw: gw, latestGw, resolvedSeason: season },
+          dataSource: dataSource,
+          fallback: dataSource === 'fallback' ? {
+            lastSync: window.__PROBE_RESULT?.fallback?.lastSync,
+            idsCount: window.__PROBE_RESULT?.fallback?.idsCount,
+            baseUrl: getBaseUrl()
+          } : null,
           apiSamples: {
             entryIds: validParticipants.map(p => p.entryId).slice(0, 5),
             sampleHistory: rows[0]
@@ -2267,7 +2356,16 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
         console.log('📈 GW points source: /api/entry/{id}/history/ (points)');
         console.log('🌍 Season resolution: bootstrap-static events');
         console.log('🎯 GW resolution: bootstrap-static events (finished || data_checked)');
+        console.log(`🔍 Data source: ${dataSource.toUpperCase()}`);
+        if (dataSource === 'fallback') {
+          const lastSync = new Date(window.__DEBUG_FPL.fallback.lastSync).toLocaleString();
+          console.log(`📅 Last sync: ${lastSync}`);
+          console.log(`🆔 Synced IDs: ${window.__DEBUG_FPL.fallback.idsCount}`);
+        }
         console.groupEnd();
+        
+        // Add data source indicator to UI (debug mode only)
+        showDataSourceIndicator(dataSource, window.__DEBUG_FPL.fallback);
       } catch (error) {
         console.error('👀 DEBUG: Failed to resolve season/GW:', error);
       }
@@ -2276,7 +2374,26 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
     // Step 3: Update DOM headings with resolved season and GW
     await updateDOMHeadings();
     
-    // Step 4: Render tables with the computed data
+    // Step 4: Runtime assertions for data correctness (debug mode only)
+    if (window.__DEBUG_MODE) {
+      try {
+        // Assert GW correctness
+        console.assert(Number.isInteger(latestGw) && latestGw > 0, 'Bad GW', latestGw);
+        
+        // Assert participant data correctness
+        rows.forEach((row, index) => {
+          console.assert(Number.isInteger(row.latestGw) && row.latestGw > 0, 'Bad row GW', row.entryId, row.latestGw);
+          console.assert(Number.isFinite(row.totalPoints) && row.totalPoints >= 0, 'Bad seasonTotal', row.entryId, row.totalPoints);
+          console.assert(Number.isFinite(row.latestGwPoints) && row.latestGwPoints >= 0, 'Bad latestGwPoints', row.entryId, row.latestGwPoints);
+        });
+        
+        console.log('✅ [DEBUG] All data assertions passed');
+      } catch (assertionError) {
+        console.error('❌ [DEBUG] Data assertion failed:', assertionError);
+      }
+    }
+    
+    // Step 5: Render tables with the computed data
     populateSeasonTable?.(rows, bootstrap);
     populateGameweekTable?.(rows, bootstrap, latestGw);
     
@@ -2289,7 +2406,9 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
     if (error.message.includes('No participants with valid entryId')) {
       showErrorBanner(error, 'error');
     } else if (error.message.includes('CORS/Network issue')) {
-      showErrorBanner(new Error('FPL API not accessible from browser. Using fallback data.'), 'warning');
+      showErrorBanner(new Error('Direct FPL API blocked by browser (CORS). Using synced data.'), 'warning');
+    } else if (error.message.includes('Fallback missing')) {
+      showErrorBanner(new Error(`Fallback data not available: ${error.message}`), 'error');
     } else if (error.message.includes('bootstrap-static failed')) {
       showErrorBanner(new Error('FPL API temporarily unavailable'), 'warning');
     } else {
@@ -5008,4 +5127,51 @@ async function fetchWithRetry(url, opts = {}, tries = 3) {
   }
   
   throw lastErr;
+}
+
+// Show data source indicator in UI (debug mode only)
+function showDataSourceIndicator(dataSource, fallbackInfo) {
+  if (!window.__DEBUG_MODE) return;
+  
+  // Remove existing indicator
+  const existingIndicator = document.getElementById('dataSourceIndicator');
+  if (existingIndicator) {
+    existingIndicator.remove();
+  }
+  
+  // Create new indicator
+  const indicator = document.createElement('div');
+  indicator.id = 'dataSourceIndicator';
+  indicator.style.cssText = `
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    background: ${dataSource === 'fallback' ? '#f59e0b' : '#10b981'};
+    color: white;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    z-index: 10001;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    font-family: monospace;
+  `;
+  
+  let text = `Data: ${dataSource.toUpperCase()}`;
+  if (dataSource === 'fallback' && fallbackInfo?.lastSync) {
+    const lastSync = new Date(fallbackInfo.lastSync).toLocaleString();
+    text += ` | Sync: ${lastSync}`;
+  }
+  
+  indicator.textContent = text;
+  indicator.title = `Data source: ${dataSource}\n${fallbackInfo ? `Last sync: ${fallbackInfo.lastSync}\nIDs: ${fallbackInfo.idsCount}` : ''}`;
+  
+  document.body.appendChild(indicator);
+  
+  // Auto-hide after 10 seconds
+  setTimeout(() => {
+    if (indicator.parentNode) {
+      indicator.remove();
+    }
+  }, 10000);
 }
