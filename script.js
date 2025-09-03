@@ -1,5 +1,5 @@
 // Build information
-const BUILD_SHA = '8h9i0j1'; // Current commit SHA for asset versioning
+const BUILD_SHA = '9i0j1k2'; // Current commit SHA for asset versioning
 const BUILD_BANNER = `[ÖrebroFPL] build ${BUILD_SHA} – tables=aggregate-only`;
 
 // Debug probe to identify CORS/network issues and check fallback data
@@ -95,30 +95,58 @@ if (typeof window !== 'undefined' && new URLSearchParams(location.search).get('d
     }
   };
   
+  // Add fallback existence checker
+  window.__DEBUG_FPL.checkFallback = async (id) => {
+    const u1 = dataUrl('data/bootstrap-static.json');
+    const u2 = dataUrl(`data/entry/${id}/history.json`);
+    const [r1, r2] = await Promise.all([
+      fetch(u1, {method:'HEAD', cache:'no-store'}),
+      fetch(u2, {method:'HEAD', cache:'no-store'})
+    ]);
+    console.table([
+      { file: u1, status: r1.status },
+      { file: u2, status: r2.status }
+    ]);
+    return { bootstrap: r1.status, history: r2.status };
+  };
+  
   console.log('[DEBUG] GW probe available: window.__DEBUG_FPL.gwProbe()');
+  console.log('[DEBUG] Fallback checker available: window.__DEBUG_FPL.checkFallback(id)');
 }
 
-// Robust base resolver for GitHub Pages subpath
-function getBaseUrl() {
-  // Check for <base> tag first
-  const base = document.querySelector('base')?.href;
-  if (base) return base;
-  
-  // Fallback: construct from current location
-  // For GitHub Pages: /username/repo/ -> /username/repo/
-  // For local: / -> /
-  const path = location.pathname;
-  const lastSlashIndex = path.lastIndexOf('/');
-  const basePath = lastSlashIndex > 0 ? path.substring(0, lastSlashIndex + 1) : '/';
-  
-  return location.origin + basePath;
+// ---- BASE + version ----
+// BUILD_SHA is already declared at the top of the file
+
+// 1) Prefer <base href> if present
+function getBaseFromTag() {
+  const tag = document.querySelector('base');
+  if (!tag?.href) return null;
+  const u = new URL(tag.href, location.href);
+  // ensure trailing slash
+  return u.origin + u.pathname.replace(/\/?$/, '/');
 }
 
-// Fallback data URL resolver with versioning
+// 2) Else derive from current script URL (works on GH Pages project sites)
+function getBaseFromScript() {
+  const src = (document.currentScript && document.currentScript.src) || (typeof import !== 'undefined' ? import.meta.url : null);
+  if (!src) return null;
+  const u = new URL(src, location.href);
+  // strip filename → /<repo>/
+  return u.origin + u.pathname.replace(/[^/]+$/, '');
+}
+
+// 3) Else fallback to location (keeps first segment only)
+function getBaseFromLocation() {
+  const segs = location.pathname.split('/').filter(Boolean);
+  const root = segs.length ? `/${segs[0]}/` : '/';
+  return location.origin + root;
+}
+
+const BASE = getBaseFromTag() || getBaseFromScript() || getBaseFromLocation();
+
 function dataUrl(relativePath) {
-  const base = getBaseUrl();
-  const url = new URL(relativePath + `?v=${BUILD_SHA}`, base);
-  return url.toString();
+  // rel like 'data/bootstrap-static.json' OR `data/entry/${id}/history.json`
+  return new URL(`${rel}?v=${BUILD_SHA}`, BASE).toString();
 }
 
 // Unified FPL fetch helper with bulletproof fallback and test flags
@@ -2306,7 +2334,7 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
   try {
     // Step 1: Resolve latest finished GW as single source of truth (with fallback guarantee)
     console.info('[Tables] Resolving latest finished GW...');
-    const latestGw = await resolveLatestFinishedGw();
+    const latestGw = await getLatestGwOnce();
     console.info('[Tables] Latest finished GW resolved:', latestGw);
     
     // Validate GW is a positive integer
@@ -2328,14 +2356,23 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
     const worker = async (participant) => {
       try {
         const history = await fetchEntryHistory(participant.entryId);
-        const { seasonTotal, latestGwPoints } = computeSeasonAndGw(history, latestGw);
+        
+        // Compute season total and latest GW points from history
+        const current = Array.isArray(history?.current) ? history.current : [];
+        
+        // Season total: take the highest total_points in current
+        const totalPoints = current.reduce((m, it) => Math.max(m, Number(it?.total_points || 0)), 0);
+        
+        // Latest GW points: find item where event === latestGw and read 'points'
+        const gwItem = current.find(it => Number(it?.event) === Number(latestGw));
+        const latestGwPoints = Number(gwItem?.points ?? 0);
         
         return {
           fplId: participant.entryId,
           entryId: participant.entryId,
           displayName: participant.displayName,
           teamName: participant.teamName,
-          totalPoints: seasonTotal,
+          totalPoints: totalPoints,
           latestGw: latestGw,
           latestGwPoints: latestGwPoints,
           gwPoints: latestGwPoints, // For backward compatibility
@@ -2363,8 +2400,26 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
     const rows = await mapWithConcurrency(validParticipants, worker, 6);
     console.info('[Tables] Processed', rows.length, 'participants with concurrency');
     
+    // Compute positions and sort rows
+    const sortedSeasonRows = [...rows].sort((a, b) => b.totalPoints - a.totalPoints);
+    const sortedGwRows = [...rows].sort((a, b) => {
+      // Sort by latest GW points, then by total points for ties
+      if (b.latestGwPoints !== a.latestGwPoints) {
+        return b.latestGwPoints - a.latestGwPoints;
+      }
+      return b.totalPoints - a.totalPoints;
+    });
+    
+    // Add position numbers
+    sortedSeasonRows.forEach((row, index) => {
+      row.pos = index + 1;
+    });
+    sortedGwRows.forEach((row, index) => {
+      row.pos = index + 1;
+    });
+    
     // Store for debug utilities and health checks
-    window.__lastRows = rows;
+    window.__lastRows = sortedSeasonRows; // Use season-sorted rows as primary
     
     // Add debug dump for inspection (only if debug mode enabled)
     if (window.__DEBUG_MODE) {
@@ -2378,7 +2433,7 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
         
         window.__DEBUG_FPL = {
           participants: validParticipants,
-          sampleRow: rows[0],
+          sampleRow: sortedSeasonRows[0],
           season: season,
           gwInfo: { requestedGw: gw, latestGw, resolvedSeason: season },
           dataSource: dataSource,
@@ -2387,12 +2442,20 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
             idsCount: fallbackInfo?.idsCount,
             ageMinutes: ageMinutes,
             freshness: fallbackInfo?.freshness,
-            baseUrl: getBaseUrl()
+            baseUrl: BASE
           } : null,
           apiSamples: {
             entryIds: validParticipants.map(p => p.entryId).slice(0, 5),
-            sampleHistory: rows[0]
-          }
+            sampleHistory: sortedSeasonRows[0]
+          },
+          computedRows: sortedSeasonRows.slice(0, 5).map(row => ({
+            pos: row.pos,
+            entryId: row.entryId,
+            displayName: row.displayName,
+            totalPoints: row.totalPoints,
+            latestGwPoints: row.latestGwPoints,
+            latestGw: row.latestGw
+          }))
         };
         
         // Debug participants table (first 5 with key fields)
@@ -2406,6 +2469,7 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
         );
         
         console.table('👀 DEBUG: Sample Row', [window.__DEBUG_FPL.sampleRow]);
+        console.table('👀 DEBUG: First 5 Computed Rows', window.__DEBUG_FPL.computedRows);
         console.log('👀 DEBUG: Season & GW Info', { season, latestGw, requestedGw: gw });
         
         // Data provenance footer
@@ -2484,8 +2548,8 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
     }
     
     // Step 5: Render tables with the computed data
-    populateSeasonTable?.(rows, bootstrap);
-    populateGameweekTable?.(rows, bootstrap, latestGw);
+    populateSeasonTable?.(sortedSeasonRows, bootstrap);
+    populateGameweekTable?.(sortedGwRows, bootstrap, latestGw);
     
     console.info('[Tables] Successfully loaded with', rows.length, 'rows, GW:', latestGw);
     
@@ -5169,7 +5233,16 @@ function deriveLatestFinishedGw(boot) {
     return fallbackGw;
   }
   
-  throw new Error('No usable events in bootstrap (no finished, data_checked, or past deadline)');
+  throw new Error('No usable events in bootstrap');
+}
+
+// Single-flight guard for GW resolution to prevent duplicate calls
+let _gwPromise;
+function getLatestGwOnce() {
+  if (!_gwPromise) {
+    _gwPromise = resolveLatestFinishedGw();
+  }
+  return _gwPromise;
 }
 
 // Fetch entry history for a specific participant with retry
