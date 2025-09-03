@@ -274,3 +274,36 @@ function getConfiguredParticipants() {
 - **GW heading**: `Gameweek 38` → `Gameweek X` (current/last finished)
 - **Page title**: Updated if contains season information
 - **Automatic updates**: Applied after bootstrap and participant resolution
+
+## Live Data Flow Fixes (Latest Update)
+
+### Participant Source & Normalization (Strict)
+- **Enhanced `getConfiguredParticipants()`** - Priority-based sourcing with strict validation
+- **Priority order**: LEGACY_PARTICIPANTS → ENTRY_IDS + overrides → localStorage (filtered)
+- **Strict entryId validation**: Only numeric, positive IDs included
+- **Invalid localStorage handling**: Invalid entries ignored, logged for admin to fix
+- **Coercion function**: `coerceEntryId()` handles common key variants (entryId, fplId, id, etc.)
+
+### GW Column Mapping Bug Fixed
+- **Column definitions**: Explicit column configs prevent mapping errors
+- **Season table**: GW column now shows current GW number (not teamName)
+- **Gameweek table**: GW column shows GW number, points column shows GW points
+- **Validation**: Dev assertions ensure GW is integer 1-59, points are numeric
+
+### Admin UI Alignment
+- **FPL ID required**: Admin form now enforces numeric FPL ID for table inclusion
+- **Validation**: On-blur and submit validation with inline error messages
+- **Export format**: JSON export uses `entryId: number` as primary key
+- **Backward compatibility**: Legacy fields preserved for existing integrations
+
+### Enhanced Health Checks
+- **HC-1**: Valid participants count > 0 (else banner + abort)
+- **HC-2**: Data join failure detection (>60% zero/one points while GW > 1)
+- **HC-3**: GW validation (integer 1-59)
+- **Targeted failures**: Clear distinction between config, API, and data-join issues
+
+### Debug Enhancements
+- **Participant table**: Shows first 5 with key fields (displayName, entryId, teamName, hasValidId)
+- **Column validation**: Console assertions for row data types
+- **GW validation**: Ensures latestGw is number, not teamName
+- **Data provenance**: Clear source documentation for totals and GW points

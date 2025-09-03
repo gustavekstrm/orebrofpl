@@ -1,5 +1,5 @@
 // Build information
-const BUILD_SHA = 'c393a63'; // Current commit SHA for asset versioning
+const BUILD_SHA = '3c99e6c'; // Current commit SHA for asset versioning
 const BUILD_BANNER = `[ÖrebroFPL] build ${BUILD_SHA} – tables=aggregate-only`;
 
 // Debug mode detection (URL-based toggle)
@@ -84,19 +84,22 @@ function getKnownEntryIds() {
   return Array.from(new Set(a.map(n => Number(n)).filter(Boolean)));
 }
 
-// Single source of truth for participant data
+// Single source of truth for participant data with strict validation
 function getConfiguredParticipants() {
   try {
-    // Prefer new normalized source(s)
-    if (Array.isArray(window.LEGACY_PARTICIPANTS) && window.LEGACY_PARTICIPANTS.length) {
-      return window.LEGACY_PARTICIPANTS;
-    }
+    let participants = [];
     
-    // If using ENTRY_IDS + PARTICIPANT_OVERRIDES, resolve to a normalized array
-    if (Array.isArray(window.ENTRY_IDS)) {
+    // Priority 1: LEGACY_PARTICIPANTS (if available and valid)
+    if (Array.isArray(window.LEGACY_PARTICIPANTS) && window.LEGACY_PARTICIPANTS.length > 0) {
+      participants = window.LEGACY_PARTICIPANTS;
+      console.log('[Config] Using LEGACY_PARTICIPANTS:', participants.length, 'entries');
+    }
+    // Priority 2: ENTRY_IDS + PARTICIPANT_OVERRIDES
+    else if (Array.isArray(window.ENTRY_IDS) && window.ENTRY_IDS.length > 0) {
       const overrides = window.PARTICIPANT_OVERRIDES || {};
-      return window.ENTRY_IDS.map(id => ({
+      participants = window.ENTRY_IDS.map(id => ({
         fplId: id,
+        entryId: id,
         namn: overrides[id]?.displayName || `Manager ${id}`,
         displayName: overrides[id]?.displayName || `Manager ${id}`,
         teamName: overrides[id]?.teamName || '',
@@ -107,9 +110,69 @@ function getConfiguredParticipants() {
         lastSeasonRank: 'N/A',
         bestGameweek: 0
       }));
+      console.log('[Config] Using ENTRY_IDS + overrides:', participants.length, 'entries');
+    }
+    // Priority 3: Check localStorage (but only merge valid entries)
+    else {
+      try {
+        const savedData = localStorage.getItem('fplParticipantsData');
+        if (savedData) {
+          const parsedData = JSON.parse(savedData);
+          if (Array.isArray(parsedData) && parsedData.length > 0) {
+            // Only include entries with valid entryId
+            const validSaved = parsedData.filter(p => {
+              const entryId = coerceEntryId(p);
+              return Number.isFinite(entryId) && entryId > 0;
+            });
+            
+            if (validSaved.length > 0) {
+              participants = validSaved;
+              console.log('[Config] Using localStorage (filtered):', validSaved.length, 'valid of', parsedData.length, 'total');
+              
+              // Log invalid entries for admin to fix
+              const invalidSaved = parsedData.filter(p => {
+                const entryId = coerceEntryId(p);
+                return !Number.isFinite(entryId) || entryId <= 0;
+              });
+              if (invalidSaved.length > 0) {
+                console.warn('[Config] Invalid localStorage entries (ignored):', 
+                  invalidSaved.map(p => ({ name: p.namn || p.displayName, rawId: p.fplId || p.entryId || p.id })));
+              }
+            }
+          }
+        }
+      } catch (localStorageError) {
+        console.warn('[Config] localStorage error (ignored):', localStorageError);
+      }
     }
     
-    throw new Error("Missing participants configuration (LEGACY_PARTICIPANTS / ENTRY_IDS).");
+    if (participants.length === 0) {
+      throw new Error("No participants found in any source (LEGACY_PARTICIPANTS / ENTRY_IDS / localStorage)");
+    }
+    
+    // Normalize and validate all participants
+    const normalized = participants.map(normalizeParticipant);
+    const validParticipants = normalized.filter(p => p.hasValidId);
+    
+    if (validParticipants.length === 0) {
+      throw new Error(`No participants with valid entryId found (${normalized.length} total, 0 valid)`);
+    }
+    
+    console.log('[Config] Participants resolved:', validParticipants.length, 'valid of', normalized.length, 'total');
+    
+    // Log invalid entries for admin to fix
+    const invalidParticipants = normalized.filter(p => !p.hasValidId);
+    if (invalidParticipants.length > 0) {
+      console.warn('[Config] Invalid participants (will be excluded):', 
+        invalidParticipants.map(p => ({ 
+          name: p.displayName, 
+          rawId: p.raw?.fplId || p.raw?.entryId || p.raw?.id,
+          normalizedId: p.entryId 
+        })));
+    }
+    
+    return validParticipants;
+    
   } catch (error) {
     // Explicit error classification
     if (error instanceof ReferenceError) {
@@ -125,9 +188,23 @@ function getConfiguredParticipants() {
   }
 }
 
-// Normalize participant data to consistent format
+// Coerce entryId from various key variants
+function coerceEntryId(p) {
+  const candidates = [
+    p.entryId, p.entry_id, p.id, p.fplId, p.fpl_id, p.entry,
+    p.fpl_id, p.entry_id, p.manager_id, p.managerId
+  ];
+  
+  const n = candidates
+    .map(v => (typeof v === 'string' ? parseInt(v, 10) : v))
+    .find(v => Number.isInteger(v) && v > 0);
+  
+  return n ?? NaN;
+}
+
+// Normalize participant data to consistent format with strict validation
 function normalizeParticipant(p) {
-  const entryId = Number(p.fplId ?? p.entryId ?? p.entry_id ?? p.id);
+  const entryId = coerceEntryId(p);
   
   // Validate entryId is numeric and positive
   if (!Number.isFinite(entryId) || entryId <= 0) {
@@ -146,6 +223,7 @@ function normalizeParticipant(p) {
     lastSeasonRank: p.lastSeasonRank ?? 'N/A',
     bestGameweek: p.bestGameweek ?? 0,
     hasValidId: Number.isFinite(entryId) && entryId > 0,
+    raw: p, // Keep raw data for debugging
     ...p,
   };
 }
@@ -1386,12 +1464,27 @@ function addNewParticipant(event) {
     
     const name = document.getElementById('newName').value.trim();
     const team = document.getElementById('newTeam').value.trim();
-    const fplId = document.getElementById('newFplId').value ? parseInt(document.getElementById('newFplId').value) : null;
+    const fplIdInput = document.getElementById('newFplId').value.trim();
     const roast = document.getElementById('newRoast').value.trim();
     const image = document.getElementById('newImage').value.trim();
     
+    // Validate required fields
     if (!name || !team) {
         alert('Namn och favoritlag är obligatoriska!');
+        return;
+    }
+    
+    // Validate FPL ID is required and numeric
+    if (!fplIdInput) {
+        alert('FPL ID är obligatoriskt för att visa data i tabellerna!');
+        document.getElementById('newFplId').focus();
+        return;
+    }
+    
+    const fplId = parseInt(fplIdInput);
+    if (!Number.isInteger(fplId) || fplId <= 0) {
+        alert('FPL ID måste vara ett positivt heltal!');
+        document.getElementById('newFplId').focus();
         return;
     }
     
@@ -1400,6 +1493,7 @@ function addNewParticipant(event) {
         totalPoäng: 2000, // Default starting points
         favoritlag: team,
         fplId: fplId,
+        entryId: fplId, // Ensure entryId is set
         profilRoast: roast || '',
         image: image || generateAvatarDataURL(name.charAt(0)),
         lastSeasonRank: 50, // Default rank
@@ -1441,7 +1535,24 @@ function addNewParticipant(event) {
 
 function exportParticipantsData() {
     const participants = getConfiguredParticipants().map(normalizeParticipant);
-    const dataStr = JSON.stringify(participants, null, 2);
+    
+    // Ensure export uses entryId (number) format
+    const exportData = participants.map(p => ({
+        entryId: p.entryId, // Primary key
+        displayName: p.displayName,
+        teamName: p.teamName,
+        totalPoäng: p.totalPoäng,
+        favoritlag: p.favoritlag,
+        profilRoast: p.profilRoast,
+        image: p.image,
+        lastSeasonRank: p.lastSeasonRank,
+        bestGameweek: p.bestGameweek,
+        // Legacy fields for backward compatibility
+        fplId: p.entryId,
+        namn: p.displayName
+    }));
+    
+    const dataStr = JSON.stringify(exportData, null, 2);
     const dataBlob = new Blob([dataStr], {type: 'application/json'});
     const url = URL.createObjectURL(dataBlob);
     
@@ -1451,7 +1562,7 @@ function exportParticipantsData() {
     link.click();
     
     URL.revokeObjectURL(url);
-    alert('Data exporterad som participants-data.json');
+    alert('Data exporterad som participants-data.json med entryId som primärnyckel');
 }
 
 function saveToLocalStorage() {
@@ -1831,7 +1942,7 @@ document.addEventListener('DOMContentLoaded', function() {
             // Update DOM headings with resolved season and GW
             await updateDOMHeadings();
             
-            const health = runHealthChecks();
+            const health = await runHealthChecks();
             if (health.ok) {
                 console.log('✅ Runtime health checks passed');
             }
@@ -2046,7 +2157,16 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
         }
       };
       
-      console.table('👀 DEBUG: Participants', window.__DEBUG_FPL.participants);
+      // Debug participants table (first 5 with key fields)
+      console.table('👀 DEBUG: Participants (first 5)', 
+        window.__DEBUG_FPL.participants.slice(0, 5).map(p => ({
+          displayName: p.displayName,
+          entryId: p.entryId,
+          teamName: p.teamName,
+          hasValidId: p.hasValidId
+        }))
+      );
+      
       console.table('👀 DEBUG: Sample Row', [window.__DEBUG_FPL.sampleRow]);
       console.log('👀 DEBUG: Season & GW Info', { season, currentGW, requestedGW: gw });
       
@@ -2156,7 +2276,7 @@ function showHealthCheckBanner(message) {
 }
 
 // Runtime health checks to prevent regressions
-function runHealthChecks() {
+async function runHealthChecks() {
     const health = {
         ok: true,
         checks: {},
@@ -2165,7 +2285,7 @@ function runHealthChecks() {
     };
     
     try {
-        // Check 1: Participants configuration
+        // Check 1: Participants configuration (strict validation)
         const participants = getConfiguredParticipants();
         if (!participants || participants.length === 0) {
             throw new Error('No participants configured');
@@ -2189,6 +2309,11 @@ function runHealthChecks() {
             message: `Found ${participants.length} participants (${validParticipants.length} with valid entryId)`
         };
         
+        // HC-1: validParticipantsCount > 0 (else banner + abort)
+        if (validParticipants.length === 0) {
+            throw new Error('HC-1 FAILED: No valid participants found');
+        }
+        
         // Check 2: Table data quality (if available)
         if (window.__lastRows && window.__lastRows.length > 0) {
             const sampleRow = window.__lastRows[0];
@@ -2209,8 +2334,17 @@ function runHealthChecks() {
             );
             
             const dataQualityRatio = validRows.length / window.__lastRows.length;
-            if (dataQualityRatio < 0.4) { // Less than 40% valid data
-                throw new Error(`Data join failed: only ${Math.round(dataQualityRatio * 100)}% of participants have valid points`);
+            
+            // HC-2: If >60% of valid participants have totalPoints === 0 or latestGwPoints <= 1 while latestGW > 1, flag "Data join failed"
+            const currentGW = await resolveCurrentGW().catch(() => 1);
+            if (currentGW > 1 && dataQualityRatio < 0.4) { // Less than 40% valid data
+                throw new Error(`HC-2 FAILED: Data join failed - only ${Math.round(dataQualityRatio * 100)}% of participants have valid points (GW ${currentGW})`);
+            }
+            
+            // HC-3: Verify typeof firstRow.latestGw === 'number' and < 60
+            const gw = await resolveCurrentGW().catch(() => 1);
+            if (typeof gw !== 'number' || !Number.isInteger(gw) || gw <= 0 || gw >= 60) {
+                throw new Error(`HC-3 FAILED: Invalid GW value: ${gw} (must be integer 1-59)`);
             }
             
             health.checks.tableData = {
@@ -2219,7 +2353,8 @@ function runHealthChecks() {
                     totalPoints: sampleRow.totalPoints,
                     gwPoints: sampleRow.gwPoints,
                     displayName: sampleRow.displayName,
-                    entryId: sampleRow.fplId
+                    entryId: sampleRow.fplId,
+                    latestGw: gw
                 },
                 dataQuality: `${Math.round(dataQualityRatio * 100)}% valid data`,
                 message: 'Table data shows valid points and good data quality'
@@ -3651,9 +3786,27 @@ function populateSeasonTable(rows, bootstrap) {
         return;
     }
     
+    // Column definition for season table
+    const COLS_SEASON = [
+        { key: 'pos', render: (row, index) => index + 1 },
+        { key: 'displayName', render: (row) => row.displayName || `Manager ${row.fplId}` },
+        { key: 'totalPoints', render: (row) => row.totalPoints ?? 0 },
+        { key: 'currentGW', render: () => currentGW }
+    ];
+    
     // Add debug assert
     const currentGW = FORCE_GW ?? bootstrap?.events?.find(e => e?.is_current)?.id ?? 1;
     console.info('[Tables] GW=', currentGW, 'sample row=', rows[0]);
+    
+    // Validate column data
+    if (window.__DEBUG_MODE) {
+        rows.slice(0, 3).forEach((row, index) => {
+            console.assert(typeof row.totalPoints === 'number', 
+                `Row ${index} totalPoints must be number:`, row);
+            console.assert(typeof row.fplId === 'number' && row.fplId > 0,
+                `Row ${index} fplId must be positive number:`, row);
+        });
+    }
     
     tbody.innerHTML = '';
     
@@ -3667,19 +3820,10 @@ function populateSeasonTable(rows, bootstrap) {
     sortedRows.forEach((player, index) => {
         console.log(`Creating row ${index + 1} for player:`, player);
         
-        // Ensure displayName with fallback order
-        const displayName = 
-            player.displayName ||
-            (player.summary ? applyParticipantOverride(player.fplId, player.summary).displayName : null) ||
-            `Manager ${player.fplId}`;
-        
         const row = document.createElement('tr');
-        row.innerHTML = `
-            <td>${index + 1}</td>
-            <td>${displayName}</td>
-            <td>${player.totalPoints ?? 0}</td>
-            <td>${player.teamName || '—'}</td>
-        `;
+        row.innerHTML = COLS_SEASON.map(col => 
+            `<td>${col.render(player, index)}</td>`
+        ).join('');
         
         // Add tooltip for blocked teams (only if enabled for tables)
         if (SHOW_PICKS_TOOLTIP_IN_TABLES && player.privateOrBlocked && player.fplId) {
@@ -3714,9 +3858,29 @@ function populateGameweekTable(rows, bootstrap, currentGW) {
         return;
     }
     
+    // Column definition for gameweek table
+    const COLS_LATEST = [
+        { key: 'pos', render: (row, index) => index + 1 },
+        { key: 'displayName', render: (row) => row.displayName || `Manager ${row.fplId}` },
+        { key: 'latestGw', render: () => gw },
+        { key: 'latestGwPoints', render: (row) => row.gwPoints ?? 0 }
+    ];
+    
     // Add debug assert
     const gw = currentGW ?? FORCE_GW ?? bootstrap?.events?.find(e => e?.is_current)?.id ?? 1;
     console.info('[Tables] GW=', gw, 'sample row=', rows[0]);
+    
+    // Validate column data
+    if (window.__DEBUG_MODE) {
+        rows.slice(0, 3).forEach((row, index) => {
+            console.assert(typeof row.gwPoints === 'number', 
+                `Row ${index} gwPoints must be number:`, row);
+            console.assert(typeof row.fplId === 'number' && row.fplId > 0,
+                `Row ${index} fplId must be positive number:`, row);
+            console.assert(Number.isInteger(gw) && gw > 0 && gw < 60,
+                `GW must be valid integer (1-59):`, gw);
+        });
+    }
     
     tbody.innerHTML = '';
     
@@ -3726,19 +3890,10 @@ function populateGameweekTable(rows, bootstrap, currentGW) {
     sortedRows.forEach((player, index) => {
         console.log(`Creating GW row ${index + 1} for player:`, player);
         
-        // Ensure displayName with fallback order
-        const displayName = 
-            player.displayName ||
-            (player.summary ? applyParticipantOverride(player.fplId, player.summary).displayName : null) ||
-            `Manager ${player.fplId}`;
-        
         const row = document.createElement('tr');
-        row.innerHTML = `
-            <td>${index + 1}</td>
-            <td>${displayName}</td>
-            <td>${gw}</td>
-            <td>${player.gwPoints ?? 0}</td>
-        `;
+        row.innerHTML = COLS_LATEST.map(col => 
+            `<td>${col.render(player, index)}</td>`
+        ).join('');
         
         // Add tooltip for blocked teams (only if enabled for tables)
         if (SHOW_PICKS_TOOLTIP_IN_TABLES && player.privateOrBlocked && player.fplId) {

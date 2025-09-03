@@ -411,12 +411,15 @@
                 <input type="text" id="newTeam" required />
               </div>
               <div class="form-group">
-                <label for="newFplId">FPL ID (valfritt):</label>
+                <label for="newFplId">FPL ID (krävs för tabeller):</label>
                 <input
                   type="number"
                   id="newFplId"
-                  placeholder="Lämna tomt om okänt"
+                  placeholder="Måste vara ett positivt nummer"
+                  required
+                  min="1"
                 />
+                <small class="form-help">FPL ID krävs för att visa data i tabellerna</small>
               </div>
               <div class="form-group">
                 <label for="newRoast">Profilroast (valfritt):</label>
@@ -448,8 +451,8 @@
     </div>
 
     <!-- BEFORE your main script -->
-    <script defer src="participants.config.js?v=c393a63"></script>
-    <script defer src="script.js?v=c393a63"></script>
+    <script defer src="participants.config.js?v=3c99e6c"></script>
+    <script defer src="script.js?v=3c99e6c"></script>
     <script>
       // Simple check to see if script.js loaded properly
       console.log("HTML loaded, checking script.js...");
