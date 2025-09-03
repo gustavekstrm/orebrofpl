@@ -7,7 +7,7 @@ async function _debugProbe() {
   const results = {
     direct: null,
     fallback: null,
-    baseUrl: getBaseUrl()
+    baseUrl: BASE
   };
   
   // Test direct FPL API access
