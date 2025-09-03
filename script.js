@@ -1,5 +1,5 @@
 // Build information
-const BUILD_SHA = '9i0j1k2'; // Current commit SHA for asset versioning
+const BUILD_SHA = '0j1k2l3'; // Current commit SHA for asset versioning
 const BUILD_BANNER = `[ÖrebroFPL] build ${BUILD_SHA} – tables=aggregate-only`;
 
 // Debug probe to identify CORS/network issues and check fallback data
@@ -144,9 +144,25 @@ function getBaseFromLocation() {
 
 const BASE = getBaseFromTag() || getBaseFromScript() || getBaseFromLocation();
 
+// Debug BASE resolution in development
+if (typeof window !== 'undefined' && new URLSearchParams(location.search).get('debug') === 'true') {
+  console.log('[BASE] Resolution debug:', {
+    tag: getBaseFromTag(),
+    script: getBaseFromScript(),
+    location: getBaseFromLocation(),
+    final: BASE,
+    currentPath: location.pathname,
+    currentScript: document.currentScript?.src
+  });
+}
+
 function dataUrl(relativePath) {
-  // rel like 'data/bootstrap-static.json' OR `data/entry/${id}/history.json`
-  return new URL(`${rel}?v=${BUILD_SHA}`, BASE).toString();
+  // relativePath like 'data/bootstrap-static.json' OR `data/entry/${id}/history.json`
+  const url = new URL(`${relativePath}?v=${BUILD_SHA}`, BASE).toString();
+  if (typeof window !== 'undefined' && new URLSearchParams(location.search).get('debug') === 'true') {
+    console.log(`[dataUrl] ${relativePath} -> ${url}`);
+  }
+  return url;
 }
 
 // Unified FPL fetch helper with bulletproof fallback and test flags
@@ -5356,7 +5372,10 @@ async function fetchWithRetry(url, opts = {}, tries = 3) {
   throw lastErr;
 }
 
-// Centralized status display system
+// Centralized status display system with deduplication
+let _lastStatusHash = null;
+let _lastStatusTime = 0;
+
 function showStatus(type, message, options = {}) {
   const { details, persistent = false, debugOnly = false } = options;
   
@@ -5364,6 +5383,20 @@ function showStatus(type, message, options = {}) {
   if (!window.__DEBUG_MODE && type === 'info') {
     return;
   }
+  
+  // Create hash of message content for deduplication
+  const statusHash = `${type}:${message}:${details || ''}`;
+  const now = Date.now();
+  
+  // Skip if same message shown in last 10 seconds
+  if (statusHash === _lastStatusHash && (now - _lastStatusTime) < 10000) {
+    console.log('[Status] Skipping duplicate message:', message);
+    return null;
+  }
+  
+  // Update deduplication state
+  _lastStatusHash = statusHash;
+  _lastStatusTime = now;
   
   // Remove existing status
   const existingStatus = document.getElementById('statusIndicator');
@@ -5401,6 +5434,9 @@ function showStatus(type, message, options = {}) {
   
   document.body.appendChild(status);
   
+  // Log status display for debugging
+  console.log(`[Status] Showing ${type} banner:`, message, details ? `(${details})` : '');
+  
   // Auto-hide info/warn messages unless persistent
   if (!persistent && type !== 'error') {
     setTimeout(() => {
@@ -5409,6 +5445,8 @@ function showStatus(type, message, options = {}) {
       }
     }, 8000);
   }
+  
+  return status;
 }
 
 // Subtle data source indicator (normal mode) and detailed indicator (debug mode)
