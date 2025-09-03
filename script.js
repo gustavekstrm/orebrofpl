@@ -1,5 +1,5 @@
 // Build information
-const BUILD_SHA = '6f7g8h9'; // Current commit SHA for asset versioning
+const BUILD_SHA = '7g8h9i0'; // Current commit SHA for asset versioning
 const BUILD_BANNER = `[ÖrebroFPL] build ${BUILD_SHA} – tables=aggregate-only`;
 
 // Debug probe to identify CORS/network issues and check fallback data
@@ -34,12 +34,22 @@ async function _debugProbe() {
     if (manifestRes.ok) {
       const manifest = await manifestRes.json();
       console.log('[PROBE] Fallback manifest found:', manifest);
+      
+      // Calculate freshness
+      const lastSync = new Date(manifest.lastSync);
+      const now = new Date();
+      const ageMinutes = Math.floor((now - lastSync) / (1000 * 60));
+      
       results.fallback = {
         success: true,
         lastSync: manifest.lastSync,
         idsCount: manifest.idsCount,
-        latestEvent: manifest.latestEvent
+        latestEvent: manifest.latestEvent,
+        ageMinutes: ageMinutes,
+        freshness: ageMinutes < 30 ? 'fresh' : ageMinutes < 180 ? 'stale' : 'degraded'
       };
+      
+      console.log(`[PROBE] Fallback freshness: ${ageMinutes} minutes (${results.fallback.freshness})`);
     } else {
       console.warn('[PROBE] Fallback manifest not found:', manifestRes.status);
       results.fallback = { success: false, status: manifestRes.status };
@@ -58,6 +68,14 @@ if (typeof window !== 'undefined' && new URLSearchParams(location.search).get('d
     console.log('[PROBE] Result:', result);
     window.__PROBE_RESULT = result;
   });
+}
+
+// Test flags for development (dev-only, never commit defaults)
+const FORCE_FALLBACK = new URLSearchParams(location.search).get('forceFallback') === 'true';
+const FORCE_DIRECT = new URLSearchParams(location.search).get('forceDirect') === 'true';
+
+if (FORCE_FALLBACK || FORCE_DIRECT) {
+  console.warn(`[DEV] Test flag enabled: ${FORCE_FALLBACK ? 'FORCE_FALLBACK' : 'FORCE_DIRECT'}`);
 }
 
 // Robust base resolver for GitHub Pages subpath
@@ -83,12 +101,18 @@ function dataUrl(relativePath) {
   return url.toString();
 }
 
-// Unified FPL fetch helper with bulletproof fallback
+// Unified FPL fetch helper with bulletproof fallback and test flags
 async function fplFetch(path, opts = {}) {
   const directUrl = 'https://fantasy.premierleague.com' + path;
   
+  // Test flag handling
+  if (FORCE_FALLBACK) {
+    console.log(`[DEV] FORCE_FALLBACK: skipping direct API for ${path}`);
+    throw new Error('FORCE_FALLBACK: Simulating direct API failure');
+  }
+  
   try {
-    // Try direct FPL API first
+    // Try direct FPL API first (unless forced to fallback)
     console.log(`[FPL] Direct fetch: ${path}`);
     const r = await fetch(directUrl, { 
       cache: 'no-store', 
@@ -101,6 +125,11 @@ async function fplFetch(path, opts = {}) {
     }
     
     console.log(`[FPL] Direct fetch successful: ${path}`);
+    
+    // Mark response as direct for debugging
+    r._isFallback = false;
+    r._source = 'direct';
+    
     return r;
     
   } catch (e) {
@@ -140,6 +169,7 @@ async function fplFetch(path, opts = {}) {
       // Mark response as fallback for debugging
       r2._isFallback = true;
       r2._fallbackPath = fallbackPath;
+      r2._source = 'fallback';
       
       return r2;
       
@@ -2317,8 +2347,10 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
       try {
         const season = await resolveCurrentSeason();
         
-        // Determine data source
+        // Determine data source and freshness
         const dataSource = window.__lastRows?.[0]?._isFallback ? 'fallback' : 'direct';
+        const fallbackInfo = window.__PROBE_RESULT?.fallback;
+        const ageMinutes = fallbackInfo?.ageMinutes || 0;
         
         window.__DEBUG_FPL = {
           participants: validParticipants,
@@ -2327,8 +2359,10 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
           gwInfo: { requestedGw: gw, latestGw, resolvedSeason: season },
           dataSource: dataSource,
           fallback: dataSource === 'fallback' ? {
-            lastSync: window.__PROBE_RESULT?.fallback?.lastSync,
-            idsCount: window.__PROBE_RESULT?.fallback?.idsCount,
+            lastSync: fallbackInfo?.lastSync,
+            idsCount: fallbackInfo?.idsCount,
+            ageMinutes: ageMinutes,
+            freshness: fallbackInfo?.freshness,
             baseUrl: getBaseUrl()
           } : null,
           apiSamples: {
@@ -2358,14 +2392,46 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
         console.log('🎯 GW resolution: bootstrap-static events (finished || data_checked)');
         console.log(`🔍 Data source: ${dataSource.toUpperCase()}`);
         if (dataSource === 'fallback') {
-          const lastSync = new Date(window.__DEBUG_FPL.fallback.lastSync).toLocaleString();
+          const lastSync = new Date(fallbackInfo.lastSync).toLocaleString();
           console.log(`📅 Last sync: ${lastSync}`);
-          console.log(`🆔 Synced IDs: ${window.__DEBUG_FPL.fallback.idsCount}`);
+          console.log(`🆔 Synced IDs: ${fallbackInfo.idsCount}`);
+          console.log(`⏰ Age: ${ageMinutes} minutes (${fallbackInfo.freshness})`);
         }
         console.groupEnd();
         
-        // Add data source indicator to UI (debug mode only)
-        showDataSourceIndicator(dataSource, window.__DEBUG_FPL.fallback);
+        // Render data source indicator with freshness logic
+        renderDataSourceIndicator({ 
+          source: dataSource, 
+          lastSync: fallbackInfo?.lastSync, 
+          ageMinutes: ageMinutes,
+          fallbackInfo: window.__DEBUG_FPL.fallback
+        });
+        
+        // Add debug footer with provenance (debug mode only)
+        if (window.__DEBUG_MODE) {
+          const footer = document.createElement('div');
+          footer.id = 'debugFooter';
+          footer.style.cssText = `
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-family: monospace;
+            z-index: 10001;
+            max-width: 400px;
+            word-break: break-all;
+          `;
+          
+          const provenance = `Provenance: ${dataSource} • GW ${latestGw} • Sync ${fallbackInfo?.lastSync ? new Date(fallbackInfo.lastSync).toLocaleString() : 'N/A'} • SHA ${BUILD_SHA}`;
+          footer.textContent = provenance;
+          footer.title = `Data source: ${dataSource}\nGameweek: ${dataSource === 'fallback' ? latestGw : 'N/A'}\nLast sync: ${fallbackInfo?.lastSync || 'N/A'}\nBuild SHA: ${BUILD_SHA}`;
+          
+          document.body.appendChild(footer);
+        }
       } catch (error) {
         console.error('👀 DEBUG: Failed to resolve season/GW:', error);
       }
@@ -2402,17 +2468,21 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
   } catch (error) {
     console.error('[Tables] Failed to load tables:', error);
     
-    // Show specific error banner based on error type
+    // Show specific status based on error type
     if (error.message.includes('No participants with valid entryId')) {
-      showErrorBanner(error, 'error');
-    } else if (error.message.includes('CORS/Network issue')) {
-      showErrorBanner(new Error('Direct FPL API blocked by browser (CORS). Using synced data.'), 'warning');
+      showStatus('error', 'No participants with valid entryId found');
     } else if (error.message.includes('Fallback missing')) {
-      showErrorBanner(new Error(`Fallback data not available: ${error.message}`), 'error');
+      showStatus('error', `Fallback data not available: ${error.message}`, { 
+        details: 'GitHub Action may not have synced yet. Check Actions tab.',
+        persistent: true 
+      });
     } else if (error.message.includes('bootstrap-static failed')) {
-      showErrorBanner(new Error('FPL API temporarily unavailable'), 'warning');
+      showStatus('warn', 'FPL API temporarily unavailable');
+    } else if (error.message.includes('CORS/Network issue')) {
+      // Don't show banner for CORS issues - this is normal and handled by fallback
+      console.log('[Tables] CORS/Network issue handled by fallback - no banner needed');
     } else {
-      showErrorBanner(error, 'error');
+      showStatus('error', error.message);
     }
     
     // Don't render tables with invalid data
@@ -2554,17 +2624,17 @@ async function runHealthChecks() {
             const hasValidPoints = sampleRow && 
                 typeof sampleRow.totalPoints === 'number' && 
                 sampleRow.totalPoints > 0 &&
-                typeof sampleRow.gwPoints === 'number' && 
-                sampleRow.gwPoints > 1;
+                typeof sampleRow.latestGwPoints === 'number' && 
+                sampleRow.latestGwPoints > 1;
             
             if (!hasValidPoints) {
-                throw new Error('Table data shows invalid points (totalPoints or gwPoints is 0/1)');
+                throw new Error('Table data shows invalid points (totalPoints or latestGwPoints is 0/1)');
             }
             
             // Check data join quality - if >60% have zero/one points, data join likely failed
             const validRows = window.__lastRows.filter(row => 
                 typeof row.totalPoints === 'number' && row.totalPoints > 0 &&
-                typeof row.gwPoints === 'number' && row.gwPoints > 1
+                typeof row.latestGwPoints === 'number' && row.latestGwPoints > 1
             );
             
             const dataQualityRatio = validRows.length / window.__lastRows.length;
@@ -2585,7 +2655,7 @@ async function runHealthChecks() {
                 ok: true,
                 sampleRow: {
                     totalPoints: sampleRow.totalPoints,
-                    gwPoints: sampleRow.gwPoints,
+                    latestGwPoints: sampleRow.latestGwPoints,
                     displayName: sampleRow.displayName,
                     entryId: sampleRow.fplId,
                     latestGw: gw
@@ -2597,6 +2667,30 @@ async function runHealthChecks() {
             health.checks.tableData = {
                 ok: true,
                 message: 'No table data yet (normal on first load)'
+            };
+        }
+        
+        // Check 4: Fallback data freshness (if using fallback)
+        const fallbackInfo = window.__PROBE_RESULT?.fallback;
+        if (fallbackInfo?.success && window.__lastRows?.[0]?._isFallback) {
+            const ageMinutes = fallbackInfo.ageMinutes || 0;
+            
+            if (ageMinutes >= 180) {
+                throw new Error(`Fallback data is too old (${ageMinutes} minutes) - results may be outdated`);
+            } else if (ageMinutes >= 30) {
+                console.warn('[Health] Fallback data is stale:', ageMinutes, 'minutes');
+            }
+            
+            health.checks.fallbackData = {
+                ok: true,
+                ageMinutes: ageMinutes,
+                freshness: fallbackInfo.freshness,
+                message: `Fallback data is ${fallbackInfo.freshness} (${ageMinutes} minutes old)`
+            };
+        } else if (window.__lastRows?.[0]?._source === 'direct') {
+            health.checks.fallbackData = {
+                ok: true,
+                message: 'Using direct FPL API'
             };
         }
         
@@ -5129,49 +5223,149 @@ async function fetchWithRetry(url, opts = {}, tries = 3) {
   throw lastErr;
 }
 
-// Show data source indicator in UI (debug mode only)
-function showDataSourceIndicator(dataSource, fallbackInfo) {
-  if (!window.__DEBUG_MODE) return;
+// Centralized status display system
+function showStatus(type, message, options = {}) {
+  const { details, persistent = false, debugOnly = false } = options;
   
-  // Remove existing indicator
-  const existingIndicator = document.getElementById('dataSourceIndicator');
-  if (existingIndicator) {
-    existingIndicator.remove();
+  // In normal mode, only show warnings and errors
+  if (!window.__DEBUG_MODE && type === 'info') {
+    return;
   }
   
-  // Create new indicator
-  const indicator = document.createElement('div');
-  indicator.id = 'dataSourceIndicator';
-  indicator.style.cssText = `
+  // Remove existing status
+  const existingStatus = document.getElementById('statusIndicator');
+  if (existingStatus) {
+    existingStatus.remove();
+  }
+  
+  const colors = {
+    info: '#3b82f6',    // Blue
+    warn: '#f59e0b',    // Yellow/Orange
+    error: '#dc2626'    // Red
+  };
+  
+  const status = document.createElement('div');
+  status.id = 'statusIndicator';
+  status.style.cssText = `
     position: fixed;
-    top: 10px;
-    right: 10px;
-    background: ${dataSource === 'fallback' ? '#f59e0b' : '#10b981'};
+    top: ${type === 'error' ? '0' : '60px'};
+    left: 0;
+    right: 0;
+    background: ${colors[type] || colors.info};
     color: white;
-    padding: 8px 12px;
-    border-radius: 6px;
-    font-size: 12px;
-    font-weight: 500;
-    z-index: 10001;
+    padding: ${type === 'error' ? '1rem' : '0.5rem'};
+    text-align: center;
+    font-weight: ${type === 'error' ? 'bold' : '500'};
+    z-index: 10000;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    font-family: monospace;
+    font-size: ${type === 'error' ? '16px' : '14px'};
   `;
   
-  let text = `Data: ${dataSource.toUpperCase()}`;
-  if (dataSource === 'fallback' && fallbackInfo?.lastSync) {
-    const lastSync = new Date(fallbackInfo.lastSync).toLocaleString();
-    text += ` | Sync: ${lastSync}`;
+  status.textContent = message;
+  if (details) {
+    status.title = details;
   }
   
-  indicator.textContent = text;
-  indicator.title = `Data source: ${dataSource}\n${fallbackInfo ? `Last sync: ${fallbackInfo.lastSync}\nIDs: ${fallbackInfo.idsCount}` : ''}`;
+  document.body.appendChild(status);
   
-  document.body.appendChild(indicator);
+  // Auto-hide info/warn messages unless persistent
+  if (!persistent && type !== 'error') {
+    setTimeout(() => {
+      if (status.parentNode) {
+        status.remove();
+      }
+    }, 8000);
+  }
+}
+
+// Subtle data source indicator (normal mode) and detailed indicator (debug mode)
+function renderDataSourceIndicator({ source, lastSync, ageMinutes, fallbackInfo }) {
+  // Remove existing indicators
+  ['dataSourceIndicator', 'dataSourceDot'].forEach(id => {
+    const existing = document.getElementById(id);
+    if (existing) existing.remove();
+  });
   
-  // Auto-hide after 10 seconds
-  setTimeout(() => {
-    if (indicator.parentNode) {
-      indicator.remove();
+  if (source === 'direct') {
+    // Direct API - no indicator needed in normal mode
+    if (window.__DEBUG_MODE) {
+      showStatus('info', 'Data source: Direct API', { debugOnly: true });
     }
-  }, 10000);
+    return;
+  }
+  
+  if (source === 'fallback') {
+    // Determine freshness status
+    let freshnessStatus = 'fresh';
+    let statusType = 'info';
+    let statusMessage = '';
+    
+    if (ageMinutes >= 180) {
+      freshnessStatus = 'degraded';
+      statusType = 'error';
+      statusMessage = `Synkad data är för gammal (senast: ${new Date(lastSync).toLocaleString()}). Resultaten kan vara inaktuella.`;
+    } else if (ageMinutes >= 30) {
+      freshnessStatus = 'stale';
+      statusType = 'warn';
+      statusMessage = `Synkad data är äldre än 30 min (senast: ${new Date(lastSync).toLocaleString()}).`;
+    } else {
+      freshnessStatus = 'fresh';
+      statusType = 'info';
+      statusMessage = `Using synced data (last sync: ${new Date(lastSync).toLocaleString()})`;
+    }
+    
+    // Show status based on freshness
+    if (freshnessStatus !== 'fresh') {
+      showStatus(statusType, statusMessage, { 
+        details: `Fallback data age: ${ageMinutes} minutes`,
+        persistent: freshnessStatus === 'degraded'
+      });
+    }
+    
+    // In normal mode, show subtle indicator for fresh data
+    if (freshnessStatus === 'fresh' && !window.__DEBUG_MODE) {
+      const dot = document.createElement('div');
+      dot.id = 'dataSourceDot';
+      dot.style.cssText = `
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        width: 8px;
+        height: 8px;
+        background: #3b82f6;
+        border-radius: 50%;
+        z-index: 10001;
+        cursor: help;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+      `;
+      dot.title = `Using synced data (last sync: ${new Date(lastSync).toLocaleString()})`;
+      document.body.appendChild(dot);
+    }
+    
+    // In debug mode, show detailed indicator
+    if (window.__DEBUG_MODE) {
+      const indicator = document.createElement('div');
+      indicator.id = 'dataSourceIndicator';
+      indicator.style.cssText = `
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        background: ${statusType === 'error' ? '#dc2626' : statusType === 'warn' ? '#f59e0b' : '#3b82f6'};
+        color: white;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 500;
+        z-index: 10001;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        font-family: monospace;
+      `;
+      
+      const text = `Data: ${source.toUpperCase()} • ${freshnessStatus.toUpperCase()} • ${new Date(lastSync).toLocaleString()}`;
+      indicator.textContent = text;
+      indicator.title = `Data source: ${source}\nFreshness: ${freshnessStatus}\nLast sync: ${lastSync}\nAge: ${ageMinutes} minutes`;
+      
+      document.body.appendChild(indicator);
+    }
+  }
 }
