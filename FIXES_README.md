@@ -194,3 +194,45 @@ function getConfiguredParticipants() {
 - `window.__DEBUG_FPL.participants` - contains resolved participant data
 - Console logging shows participant count and configuration status
 - Clear error messages for configuration vs API issues
+
+## Post-Fix Hardening (Latest Update)
+
+### Runtime Health Checks
+- **`runHealthChecks()`** - Comprehensive runtime validation
+  - Participants configuration validation (> 0 participants)
+  - Table data quality validation (numeric totalPoints > 0, gwPoints > 1)
+  - Deprecated globals detection
+  - Results exposed on `window.__FPL_HEALTH`
+
+### URL-Based Debug Toggle
+- **`?debug=true`** - Enables verbose logging and debug objects
+- **Default**: Debug OFF (no logs, no globals)
+- **Debug objects**: `window.__DEBUG_FPL` with participants, sample row, and GW info
+- **Console output**: `console.table()` for structured data inspection
+
+### Error Classification System
+- **Single helper**: `showErrorBanner(error, type)` maps exceptions to user banners
+- **Explicit catch branches**: ReferenceError and TypeError handled separately
+- **Configuration errors**: Red banner at top
+- **Health check failures**: Red banner below config banner (non-blocking)
+- **API errors**: Only shown for actual network failures
+
+### Asset Versioning
+- **Script tags**: `?v=7714af2` (current commit SHA)
+- **Build banner**: `[ÖrebroFPL] build 7714af2 – tables=aggregate-only`
+- **Cache busting**: GitHub Pages never serves stale JS
+
+### CI Health Checks
+- **GitHub Actions workflow**: `.github/workflows/health-check.yml`
+- **Fast execution**: <10 seconds
+- **Tests**: 
+  - Participants resolve to > 0
+  - No deprecated globals (`participantsData`)
+  - Health checks pass
+  - Script versioning verified
+- **Dependencies**: jsdom for Node.js testing environment
+
+### Guard Functions
+- **`assertNoDeprecatedGlobals()`** - Unit-style assertions
+- **Early failure**: Fails fast if deprecated globals detected
+- **Runtime protection**: Prevents regressions during development

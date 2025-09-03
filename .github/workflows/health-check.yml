@@ -1,0 +1,143 @@
+name: FPL ÖREBRO Health Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm install jsdom
+    
+    - name: Create mock participants config
+      run: |
+        cat > mock-participants.config.js << 'EOF'
+        window = {};
+        window.ENTRY_IDS = [141529, 1490173, 2884065];
+        window.PARTICIPANT_OVERRIDES = {
+          141529: { displayName: "Test Manager 1", teamName: "Test Team 1" },
+          1490173: { displayName: "Test Manager 2", teamName: "Test Team 2" },
+          2884065: { displayName: "Test Manager 3", teamName: "Test Team 3" }
+        };
+        window.LEGACY_PARTICIPANTS = [];
+        console.log = () => {}; // Suppress console output
+        EOF
+    
+    - name: Create test script
+      run: |
+        cat > test-health.js << 'EOF'
+        const { JSDOM } = require('jsdom');
+        const fs = require('fs');
+        
+        // Create mock DOM environment
+        const dom = new JSDOM(`
+          <!DOCTYPE html>
+          <html>
+            <body>
+              <div id="profilesGrid"></div>
+              <div id="seasonTableBody"></div>
+              <div id="gameweekTableBody"></div>
+            </body>
+          </html>
+        `);
+        
+        global.window = dom.window;
+        global.document = dom.window.document;
+        global.console = console;
+        
+        // Mock fetch and other browser APIs
+        global.fetch = async () => ({ ok: true, json: async () => ({ results: [] }) });
+        global.localStorage = { getItem: () => null, setItem: () => {} };
+        
+        // Load mock config
+        require('./mock-participants.config.js');
+        
+        // Load main script
+        const scriptContent = fs.readFileSync('./script.js', 'utf8');
+        
+        // Extract functions for testing
+        const getConfiguredParticipantsMatch = scriptContent.match(/function getConfiguredParticipants\(\) \{[\s\S]*?\}/);
+        const runHealthChecksMatch = scriptContent.match(/function runHealthChecks\(\) \{[\s\S]*?\}/);
+        const assertNoDeprecatedGlobalsMatch = scriptContent.match(/function assertNoDeprecatedGlobals\(\) \{[\s\S]*?\}/);
+        
+        if (!getConfiguredParticipantsMatch || !runHealthChecksMatch || !assertNoDeprecatedGlobalsMatch) {
+          throw new Error('Required functions not found in script.js');
+        }
+        
+        // Create test environment
+        const testScript = `
+          ${getConfiguredParticipantsMatch[0]}
+          ${runHealthChecksMatch[0]}
+          ${assertNoDeprecatedGlobalsMatch[0]}
+          
+          // Mock helper functions
+          function generateAvatarDataURL(char) { return 'data:image/svg+xml;base64,test'; }
+          function applyParticipantOverride(id, data) { return { displayName: 'Test', teamName: 'Test' }; }
+          
+          // Run tests
+          try {
+            // Test 1: Participants resolve to > 0
+            const participants = getConfiguredParticipants();
+            if (!participants || participants.length === 0) {
+              throw new Error('Participants resolve to 0');
+            }
+            console.log('✅ Test 1 passed: Participants count =', participants.length);
+            
+            // Test 2: No deprecated globals
+            assertNoDeprecatedGlobals();
+            console.log('✅ Test 2 passed: No deprecated globals');
+            
+            // Test 3: Health checks pass
+            const health = runHealthChecks();
+            if (!health.ok) {
+              throw new Error('Health checks failed: ' + health.errors.join(', '));
+            }
+            console.log('✅ Test 3 passed: Health checks OK');
+            
+            console.log('🎉 All health checks passed!');
+            
+          } catch (error) {
+            console.error('❌ Health check failed:', error.message);
+            process.exit(1);
+          }
+        `;
+        
+        // Execute test
+        eval(testScript);
+        EOF
+    
+    - name: Run health checks
+      run: node test-health.js
+    
+    - name: Check for deprecated references
+      run: |
+        if grep -r "participantsData" script.js; then
+          echo "❌ Deprecated 'participantsData' reference found!"
+          exit 1
+        fi
+        echo "✅ No deprecated references found"
+    
+    - name: Verify script versioning
+      run: |
+        if ! grep -q "v=7714af2" index.html; then
+          echo "❌ Script versioning not updated!"
+          exit 1
+        fi
+        echo "✅ Script versioning verified"

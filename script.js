@@ -1,5 +1,18 @@
+// Build information
+const BUILD_SHA = '7714af2'; // Current commit SHA for asset versioning
+const BUILD_BANNER = `[ÖrebroFPL] build ${BUILD_SHA} – tables=aggregate-only`;
+
+// Debug mode detection (URL-based toggle)
+const urlParams = new URLSearchParams(window.location.search);
+const __DEBUG_MODE = urlParams.get('debug') === 'true';
+window.__DEBUG_MODE = __DEBUG_MODE;
+
 // Configuration
 console.log('=== SCRIPT.JS LOADING ===');
+console.info(BUILD_BANNER);
+if (__DEBUG_MODE) {
+    console.info('🔍 DEBUG MODE ENABLED - verbose logging and debug objects active');
+}
 
 // Ensure these functions exist (use no-op fallbacks if undefined)
 window.fetchJSON = window.fetchJSON || (async () => ({}));
@@ -45,8 +58,8 @@ const ADMIN_PASSWORD = 'Pepsie10';
 const FPL_API_BASE = 'https://fpl-proxy-1.onrender.com/api';
 const FPL_PROXY_BASE = FPL_API_BASE;
 
-// Build banner
-console.info('[ÖrebroFPL] build v2.1 – tables=aggregate-only, picks=details-only, season=2025/26');
+// Build banner (using constant)
+console.info(BUILD_BANNER);
 
 // Dev sentinel to detect picks calls outside details
 (function hookFetchForTablesGuard(){
@@ -73,29 +86,43 @@ function getKnownEntryIds() {
 
 // Single source of truth for participant data
 function getConfiguredParticipants() {
-  // Prefer new normalized source(s)
-  if (Array.isArray(window.LEGACY_PARTICIPANTS) && window.LEGACY_PARTICIPANTS.length) {
-    return window.LEGACY_PARTICIPANTS;
+  try {
+    // Prefer new normalized source(s)
+    if (Array.isArray(window.LEGACY_PARTICIPANTS) && window.LEGACY_PARTICIPANTS.length) {
+      return window.LEGACY_PARTICIPANTS;
+    }
+    
+    // If using ENTRY_IDS + PARTICIPANT_OVERRIDES, resolve to a normalized array
+    if (Array.isArray(window.ENTRY_IDS)) {
+      const overrides = window.PARTICIPANT_OVERRIDES || {};
+      return window.ENTRY_IDS.map(id => ({
+        fplId: id,
+        namn: overrides[id]?.displayName || `Manager ${id}`,
+        displayName: overrides[id]?.displayName || `Manager ${id}`,
+        teamName: overrides[id]?.teamName || '',
+        totalPoäng: 0, // Will be populated from API
+        favoritlag: '',
+        profilRoast: 'Ny deltagare - välkommen!',
+        image: generateAvatarDataURL(overrides[id]?.displayName?.charAt(0) || 'M'),
+        lastSeasonRank: 'N/A',
+        bestGameweek: 0
+      }));
+    }
+    
+    throw new Error("Missing participants configuration (LEGACY_PARTICIPANTS / ENTRY_IDS).");
+  } catch (error) {
+    // Explicit error classification
+    if (error instanceof ReferenceError) {
+      console.error('[Config] ReferenceError in participant resolution:', error);
+      throw new Error('Configuration error: Missing required global variables');
+    } else if (error instanceof TypeError) {
+      console.error('[Config] TypeError in participant resolution:', error);
+      throw new Error('Configuration error: Invalid data types in configuration');
+    } else {
+      console.error('[Config] Error in participant resolution:', error);
+      throw error; // Re-throw as-is
+    }
   }
-  
-  // If using ENTRY_IDS + PARTICIPANT_OVERRIDES, resolve to a normalized array
-  if (Array.isArray(window.ENTRY_IDS)) {
-    const overrides = window.PARTICIPANT_OVERRIDES || {};
-    return window.ENTRY_IDS.map(id => ({
-      fplId: id,
-      namn: overrides[id]?.displayName || `Manager ${id}`,
-      displayName: overrides[id]?.displayName || `Manager ${id}`,
-      teamName: overrides[id]?.teamName || '',
-      totalPoäng: 0, // Will be populated from API
-      favoritlag: '',
-      profilRoast: 'Ny deltagare - välkommen!',
-      image: generateAvatarDataURL(overrides[id]?.displayName?.charAt(0) || 'M'),
-      lastSeasonRank: 'N/A',
-      bestGameweek: 0
-    }));
-  }
-  
-  throw new Error("Missing participants configuration (LEGACY_PARTICIPANTS / ENTRY_IDS).");
 }
 
 // Normalize participant data to consistent format
@@ -1742,6 +1769,19 @@ document.addEventListener('DOMContentLoaded', function() {
     setupEventListeners();
     loadFromLocalStorage(); // Load saved participant data
     
+    // Run health checks after bootstrap
+    setTimeout(() => {
+        try {
+            assertNoDeprecatedGlobals();
+            const health = runHealthChecks();
+            if (health.ok) {
+                console.log('✅ Runtime health checks passed');
+            }
+        } catch (error) {
+            console.error('❌ Health check assertion failed:', error);
+        }
+    }, 1000);
+    
     // Add Enter key handler for password input
     const passwordInput = document.getElementById('passwordInput');
     if (passwordInput) {
@@ -1924,31 +1964,44 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
   // Store for debug utilities
   window.__lastRows = rows;
   
-  // Add debug dump for inspection
-  window.__DEBUG_FPL = {
-    latestRowSample: rows[0],
-    apiSamples: {
-      summaries: summaries?.results?.slice(0, 2),
-      histories: histories?.results?.slice(0, 2),
-      gw,
-      entryIds: entryIds.slice(0, 2)
-    }
-  };
+  // Add debug dump for inspection (only if debug mode enabled)
+  if (window.__DEBUG_MODE) {
+    window.__DEBUG_FPL = {
+      participants: getConfiguredParticipants().map(normalizeParticipant),
+      sampleRow: rows[0],
+      gwInfo: { gw, currentGW: await resolveCurrentGW() },
+      apiSamples: {
+        summaries: summaries?.results?.slice(0, 2),
+        histories: histories?.results?.slice(0, 2),
+        entryIds: entryIds.slice(0, 2)
+      }
+    };
+    
+    console.table('👀 DEBUG: Participants', window.__DEBUG_FPL.participants);
+    console.table('👀 DEBUG: Sample Row', [window.__DEBUG_FPL.sampleRow]);
+    console.log('👀 DEBUG: GW Info', window.__DEBUG_FPL.gwInfo);
+  }
 
   // reuse existing renderers (unchanged UI)
   populateSeasonTable?.(rows, bootstrap);
   populateGameweekTable?.(rows, bootstrap, gw);
 }
 
-// Show configuration error banner (not API error)
-function showConfigurationErrorBanner(message) {
+// Single helper to map exceptions to user banners
+function showErrorBanner(error, type = 'error') {
     const banner = document.createElement('div');
+    const colors = {
+        'error': '#dc2626',
+        'warning': '#f59e0b',
+        'info': '#3b82f6'
+    };
+    
     banner.style.cssText = `
         position: fixed;
-        top: 0;
+        top: ${type === 'error' ? '0' : '60px'};
         left: 0;
         right: 0;
-        background: #dc2626;
+        background: ${colors[type] || colors.error};
         color: white;
         padding: 1rem;
         text-align: center;
@@ -1956,10 +2009,130 @@ function showConfigurationErrorBanner(message) {
         z-index: 10000;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     `;
-    banner.textContent = `⚠️ ${message}`;
+    
+    let message = error.message || error.toString();
+    let prefix = '⚠️';
+    
+    if (type === 'error') {
+        prefix = '❌';
+        if (error instanceof ReferenceError) {
+            message = `Configuration error: ${message}`;
+        } else if (error instanceof TypeError) {
+            message = `Data error: ${message}`;
+        }
+    } else if (type === 'warning') {
+        prefix = '⚠️';
+    } else if (type === 'info') {
+        prefix = 'ℹ️';
+    }
+    
+    banner.textContent = `${prefix} ${message}`;
     document.body.appendChild(banner);
     
-    console.error('[Config] Configuration error banner shown:', message);
+    console.error(`[${type.toUpperCase()}] Banner shown:`, error);
+}
+
+// Show configuration error banner (not API error)
+function showConfigurationErrorBanner(message) {
+    showErrorBanner(new Error(message), 'error');
+}
+
+// Show health check error banner (non-blocking)
+function showHealthCheckBanner(message) {
+    showErrorBanner(new Error(`Health check failed: ${message}`), 'warning');
+}
+
+// Runtime health checks to prevent regressions
+function runHealthChecks() {
+    const health = {
+        ok: true,
+        checks: {},
+        timestamp: new Date().toISOString(),
+        errors: []
+    };
+    
+    try {
+        // Check 1: Participants configuration
+        const participants = getConfiguredParticipants();
+        if (!participants || participants.length === 0) {
+            throw new Error('No participants configured');
+        }
+        health.checks.participants = {
+            ok: true,
+            count: participants.length,
+            message: `Found ${participants.length} participants`
+        };
+        
+        // Check 2: Table data quality (if available)
+        if (window.__lastRows && window.__lastRows.length > 0) {
+            const sampleRow = window.__lastRows[0];
+            const hasValidPoints = sampleRow && 
+                typeof sampleRow.totalPoints === 'number' && 
+                sampleRow.totalPoints > 0 &&
+                typeof sampleRow.gwPoints === 'number' && 
+                sampleRow.gwPoints > 1;
+            
+            if (!hasValidPoints) {
+                throw new Error('Table data shows invalid points (totalPoints or gwPoints is 0/1)');
+            }
+            
+            health.checks.tableData = {
+                ok: true,
+                sampleRow: {
+                    totalPoints: sampleRow.totalPoints,
+                    gwPoints: sampleRow.gwPoints,
+                    displayName: sampleRow.displayName
+                },
+                message: 'Table data shows valid points'
+            };
+        } else {
+            health.checks.tableData = {
+                ok: true,
+                message: 'No table data yet (normal on first load)'
+            };
+        }
+        
+        // Check 3: No deprecated globals
+        if (typeof window.participantsData !== 'undefined') {
+            throw new Error('Deprecated participantsData global still exists');
+        }
+        health.checks.noDeprecatedGlobals = {
+            ok: true,
+            message: 'No deprecated globals detected'
+        };
+        
+        console.log('✅ Health checks passed:', health.checks);
+        
+    } catch (error) {
+        health.ok = false;
+        health.errors.push(error.message);
+        
+        // Show non-blocking health check banner
+        showHealthCheckBanner(error.message);
+        
+        console.error('❌ Health check failed:', error);
+    }
+    
+    // Expose health status globally
+    window.__FPL_HEALTH = health;
+    
+    return health;
+}
+
+// Guard against deprecated globals (unit-style assertions)
+function assertNoDeprecatedGlobals() {
+    const deprecated = [
+        'participantsData',
+        'oldParticipantsData',
+        'legacyParticipantsData'
+    ];
+    
+    const found = deprecated.filter(name => typeof window[name] !== 'undefined');
+    if (found.length > 0) {
+        throw new Error(`Deprecated globals detected: ${found.join(', ')}`);
+    }
+    
+    return true;
 }
 
 // Hook "Tabeller"
