@@ -148,3 +148,49 @@ Contains the last normalized rows passed to table renderers.
 - Debug logging enabled for development
 - All functions handle missing/partial data gracefully
 - Current GW detection prioritizes finished GWs over current GW
+
+## Participant Data Fixes (Latest Update)
+
+### Removed `participantsData` References
+- Eliminated all `participantsData` variable references throughout the codebase
+- Replaced with `getConfiguredParticipants()` helper function for single source of truth
+- Added `normalizeParticipant()` function for consistent data format
+
+### New Participant Sourcing System
+```javascript
+// Single source of truth for participant data
+function getConfiguredParticipants() {
+  // Prefer LEGACY_PARTICIPANTS if available
+  if (Array.isArray(window.LEGACY_PARTICIPANTS) && window.LEGACY_PARTICIPANTS.length) {
+    return window.LEGACY_PARTICIPANTS;
+  }
+  
+  // Fallback to ENTRY_IDS + PARTICIPANT_OVERRIDES
+  if (Array.isArray(window.ENTRY_IDS)) {
+    const overrides = window.PARTICIPANT_OVERRIDES || {};
+    return window.ENTRY_IDS.map(id => ({
+      fplId: id,
+      displayName: overrides[id]?.displayName || `Manager ${id}`,
+      // ... other fields
+    }));
+  }
+  
+  throw new Error("Missing participants configuration");
+}
+```
+
+### Corrected Error Classification
+- **Configuration errors** (missing participants) now show "Participants configuration missing" banner
+- **API errors** only show when actual network requests fail
+- No more misleading "FPL API unreachable" messages for missing variables
+
+### Updated Functions
+- `populateProfiles()` - now uses `getConfiguredParticipants()`
+- `populateAdminParticipantsList()` - now uses normalized participant data
+- `updateHighlightsFromData()` - now uses configured participants
+- All admin functions updated to use new participant sourcing
+
+### Debug Objects
+- `window.__DEBUG_FPL.participants` - contains resolved participant data
+- Console logging shows participant count and configuration status
+- Clear error messages for configuration vs API issues

@@ -6,7 +6,6 @@ window.fetchJSON = window.fetchJSON || (async () => ({}));
 window.fetchAggregateSummaries = window.fetchAggregateSummaries || (async () => ({ results: [] }));
 window.fetchAggregateHistory = window.fetchAggregateHistory || (async () => ({ results: [], gw: 1 }));
 window.loadTablesViewUsingAggregates = window.loadTablesViewUsingAggregates || (async () => {});
-window.ensureParticipantsData = window.ensureParticipantsData || (async () => { window.participantsData = window.participantsData || []; });
 
 // Diagnostics (dev-only)
 window.__diag = async function () {
@@ -18,7 +17,6 @@ window.__diag = async function () {
     const finalIds = getKnownEntryIds();
 
     console.log('[DIAG] ENTRY_IDS count:', (window.ENTRY_IDS||[]).length, 
-                'participantsData:', (window.participantsData||[]).length,
                 'LEAGUE_CODE:', window.LEAGUE_CODE,
                 'final ids for aggregates:', finalIds.length, finalIds.slice(0, 10));
 
@@ -69,12 +67,51 @@ function getKnownEntryIds() {
   const a = [];
   // Read from window.ENTRY_IDS first (from config)
   if (Array.isArray(window.ENTRY_IDS)) a.push(...window.ENTRY_IDS);
-  // Then from participantsData as backup
-  if (Array.isArray(window.participantsData)) {
-    for (const p of window.participantsData) if (p?.fplId) a.push(p.fplId);
-  }
   // dedupe + numeric
   return Array.from(new Set(a.map(n => Number(n)).filter(Boolean)));
+}
+
+// Single source of truth for participant data
+function getConfiguredParticipants() {
+  // Prefer new normalized source(s)
+  if (Array.isArray(window.LEGACY_PARTICIPANTS) && window.LEGACY_PARTICIPANTS.length) {
+    return window.LEGACY_PARTICIPANTS;
+  }
+  
+  // If using ENTRY_IDS + PARTICIPANT_OVERRIDES, resolve to a normalized array
+  if (Array.isArray(window.ENTRY_IDS)) {
+    const overrides = window.PARTICIPANT_OVERRIDES || {};
+    return window.ENTRY_IDS.map(id => ({
+      fplId: id,
+      namn: overrides[id]?.displayName || `Manager ${id}`,
+      displayName: overrides[id]?.displayName || `Manager ${id}`,
+      teamName: overrides[id]?.teamName || '',
+      totalPoäng: 0, // Will be populated from API
+      favoritlag: '',
+      profilRoast: 'Ny deltagare - välkommen!',
+      image: generateAvatarDataURL(overrides[id]?.displayName?.charAt(0) || 'M'),
+      lastSeasonRank: 'N/A',
+      bestGameweek: 0
+    }));
+  }
+  
+  throw new Error("Missing participants configuration (LEGACY_PARTICIPANTS / ENTRY_IDS).");
+}
+
+// Normalize participant data to consistent format
+function normalizeParticipant(p) {
+  return {
+    fplId: Number(p.fplId ?? p.entryId ?? p.entry_id ?? p.id),
+    displayName: p.displayName ?? p.namn ?? p.name ?? p.entry_name ?? `Manager ${p.fplId}`,
+    teamName: p.teamName ?? p.team_name ?? p.favoritlag ?? '',
+    totalPoäng: p.totalPoäng ?? p.totalPoints ?? 0,
+    favoritlag: p.favoritlag ?? p.teamName ?? '',
+    profilRoast: p.profilRoast ?? 'Ny deltagare - välkommen!',
+    image: p.image || generateAvatarDataURL((p.displayName || p.namn || 'M').charAt(0)),
+    lastSeasonRank: p.lastSeasonRank ?? 'N/A',
+    bestGameweek: p.bestGameweek ?? 0,
+    ...p,
+  };
 }
 
 // Helper function to apply participant overrides
@@ -169,7 +206,7 @@ function normalizePicksResponse(rec){
   };
 }
 
-// Helper function to update ENTRY_IDS from participantsData (legacy - now handled by config)
+// Helper function to update ENTRY_IDS (legacy - now handled by config)
 function updateEntryIds() {
     // This function is kept for backward compatibility but ENTRY_IDS are now managed by participants.config.js
     console.log('updateEntryIds called - ENTRY_IDS are now managed by participants.config.js');
@@ -1015,7 +1052,8 @@ async function updateParticipantsWithFPLData() {
     console.log('Updating participants with FPL data...');
     
     const updatedParticipants = [];
-    for (const participant of participantsData) {
+    const participants = getConfiguredParticipants().map(normalizeParticipant);
+    for (const participant of participants) {
         const updated = await fetchParticipantFPLData(participant);
         updatedParticipants.push(updated);
     }
@@ -1095,7 +1133,8 @@ function populateAdminParticipantsList() {
         currentPrizeTotal.textContent = prizeTotal;
     }
     
-    participantsData.forEach((participant, index) => {
+    const participants = getConfiguredParticipants().map(normalizeParticipant);
+    participants.forEach((participant, index) => {
         const card = document.createElement('div');
         card.className = 'admin-participant-card';
         
@@ -1286,14 +1325,18 @@ function addNewParticipant(event) {
         bestGameweek: 60 // Default best GW
     };
     
-    participantsData.push(newParticipant);
+    // Add to LEGACY_PARTICIPANTS instead of participantsData
+    if (Array.isArray(window.LEGACY_PARTICIPANTS)) {
+        window.LEGACY_PARTICIPANTS.push(newParticipant);
+    }
     
     // Update ENTRY_IDS for aggregate endpoints
     updateEntryIds();
     
     // Save to localStorage immediately
     try {
-        localStorage.setItem('fplParticipantsData', JSON.stringify(participantsData));
+        const participants = getConfiguredParticipants().map(normalizeParticipant);
+        localStorage.setItem('fplParticipantsData', JSON.stringify(participants));
     } catch (error) {
         console.error('Error saving to localStorage:', error);
         alert('Kunde inte spara ändringar. Försök igen.');
@@ -1316,7 +1359,8 @@ function addNewParticipant(event) {
 }
 
 function exportParticipantsData() {
-    const dataStr = JSON.stringify(participantsData, null, 2);
+    const participants = getConfiguredParticipants().map(normalizeParticipant);
+    const dataStr = JSON.stringify(participants, null, 2);
     const dataBlob = new Blob([dataStr], {type: 'application/json'});
     const url = URL.createObjectURL(dataBlob);
     
@@ -1334,7 +1378,8 @@ function saveToLocalStorage() {
     updateEntryIds();
     
     try {
-        localStorage.setItem('fplParticipantsData', JSON.stringify(participantsData));
+        const participants = getConfiguredParticipants().map(normalizeParticipant);
+        localStorage.setItem('fplParticipantsData', JSON.stringify(participants));
         
         // Show save confirmation
         const saveButton = document.querySelector('[onclick="saveToLocalStorage()"]');
@@ -1679,6 +1724,17 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('FPL_API_BASE:', FPL_API_BASE);
     console.log('LEAGUE_CODE:', LEAGUE_CODE);
     
+    // Check participant configuration first
+    try {
+        const participants = getConfiguredParticipants();
+        console.log('✅ Participant configuration loaded:', participants.length, 'participants');
+    } catch (error) {
+        console.error('❌ Participant configuration error:', error);
+        // Show UI banner for configuration issues (not API issues)
+        showConfigurationErrorBanner('Participants configuration missing or not loaded.');
+        return; // Don't proceed with initialization
+    }
+    
     // Add data source indicator immediately
     addDataSourceIndicator();
     
@@ -1875,13 +1931,35 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
       summaries: summaries?.results?.slice(0, 2),
       histories: histories?.results?.slice(0, 2),
       gw,
-      entryIds: entryIds.slice(0, 5)
+      entryIds: entryIds.slice(0, 2)
     }
   };
 
   // reuse existing renderers (unchanged UI)
   populateSeasonTable?.(rows, bootstrap);
   populateGameweekTable?.(rows, bootstrap, gw);
+}
+
+// Show configuration error banner (not API error)
+function showConfigurationErrorBanner(message) {
+    const banner = document.createElement('div');
+    banner.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        background: #dc2626;
+        color: white;
+        padding: 1rem;
+        text-align: center;
+        font-weight: bold;
+        z-index: 10000;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    `;
+    banner.textContent = `⚠️ ${message}`;
+    document.body.appendChild(banner);
+    
+    console.error('[Config] Configuration error banner shown:', message);
 }
 
 // Hook "Tabeller"
@@ -1945,7 +2023,7 @@ async function ensureParticipantsData() {
             };
           }));
   
-  console.log('Updated participantsData from aggregates:', participantsData);
+  console.log('Updated LEGACY_PARTICIPANTS from aggregates:', LEGACY_PARTICIPANTS.length, 'participants');
 }
 
 async function onClickDeltagare() {
@@ -2306,7 +2384,8 @@ async function fetchLeagueData() {
 // Function to update participantsData with real FPL data - API-Only Mode
 async function updateParticipantsWithFPLData() {
     console.log('=== UPDATING PARTICIPANTS WITH FPL DATA (API-ONLY) ===');
-    console.log('Initial participantsData:', participantsData);
+    const participants = getConfiguredParticipants().map(normalizeParticipant);
+    console.log('Initial participants:', participants.length);
     
     // Count participants with FPL IDs
     const participantsWithFPL = LEGACY_PARTICIPANTS.filter(p => p.fplId && p.fplId !== null);
@@ -2661,7 +2740,7 @@ function useFallbackData() {
     console.log('LEGACY_PARTICIPANTS length:', LEGACY_PARTICIPANTS.length);
     console.log('LEGACY_PARTICIPANTS:', LEGACY_PARTICIPANTS);
     
-    // Validate participantsData
+    // Validate LEGACY_PARTICIPANTS
     if (!LEGACY_PARTICIPANTS || LEGACY_PARTICIPANTS.length === 0) {
         console.error('CRITICAL ERROR: LEGACY_PARTICIPANTS is empty or undefined!');
         alert('CRITICAL ERROR: LEGACY_PARTICIPANTS is empty or undefined!');
@@ -3153,7 +3232,8 @@ window.showSection = function patchedShowSection(sectionId) {
       (async () => {
         await ensureParticipantsData();
         if (typeof populateProfiles === 'function') {
-          populateProfiles(window.participantsData || []);
+          const participants = getConfiguredParticipants().map(normalizeParticipant);
+          populateProfiles(participants);
         } else {
           console.warn('[Profiles] populateProfiles() not found');
         }
@@ -3416,16 +3496,17 @@ async function updateHighlightsFromData() {
     if (useMockData) {
         console.log('Using mock data for highlights');
         
-        // Check if participantsData is available
-        if (!participantsData || participantsData.length === 0) {
-            console.error('CRITICAL ERROR: participantsData is empty or undefined!');
+        // Check if participants are available
+        const participants = getConfiguredParticipants().map(normalizeParticipant);
+        if (!participants || participants.length === 0) {
+            console.error('CRITICAL ERROR: No participants available!');
             weeklyRocketElement.textContent = 'Ingen data tillgänglig';
             weeklyFlopElement.textContent = 'Ingen data tillgänglig';
             return;
         }
         
         // Use random participants for mock highlights
-        const shuffledParticipants = [...participantsData].sort(() => 0.5 - Math.random());
+        const shuffledParticipants = [...participants].sort(() => 0.5 - Math.random());
         
         // Generate realistic gameweek points (30-85 range for a single week)
         const rocketPoints = Math.floor(Math.random() * 55) + 30; // 30-85 points
@@ -3563,8 +3644,10 @@ function updateHighlights() {
 // Populate player profiles
 function populateProfiles() {
     console.log('=== POPULATE PROFILES ===');
-    console.log('participantsData:', participantsData);
-    console.log('participantsData length:', participantsData ? participantsData.length : 'UNDEFINED');
+    
+    const participants = getConfiguredParticipants().map(normalizeParticipant);
+    console.log('participants:', participants);
+    console.log('participants length:', participants ? participants.length : 'UNDEFINED');
     
     const profilesGrid = document.getElementById('profilesGrid');
     console.log('profilesGrid element:', profilesGrid);
@@ -3574,15 +3657,15 @@ function populateProfiles() {
         return;
     }
     
-    if (!participantsData || participantsData.length === 0) {
-        console.error('CRITICAL ERROR: participantsData is empty!');
+    if (!participants || participants.length === 0) {
+        console.error('CRITICAL ERROR: No participants available!');
         profilesGrid.innerHTML = '<div style="text-align: center; padding: 2rem; color: #94a3b8;">No participants available</div>';
         return;
     }
     
     profilesGrid.innerHTML = '';
     
-    participantsData.forEach((player, index) => {
+    participants.forEach((player, index) => {
         console.log(`Creating profile card ${index + 1} for player:`, player);
         const playerCard = document.createElement('div');
         playerCard.className = 'player-card';
@@ -3627,7 +3710,7 @@ function populateProfiles() {
         profilesGrid.appendChild(playerCard);
     });
     
-    console.log('Profiles populated with', participantsData.length, 'cards');
+    console.log('Profiles populated with', participants.length, 'cards');
 }
 
 // Add player (admin function - commented out for regular users)
