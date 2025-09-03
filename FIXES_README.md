@@ -236,3 +236,41 @@ function getConfiguredParticipants() {
 - **`assertNoDeprecatedGlobals()`** - Unit-style assertions
 - **Early failure**: Fails fast if deprecated globals detected
 - **Runtime protection**: Prevents regressions during development
+
+## Live Site Data Fixes (Latest Update)
+
+### Removed Hardcoded Values
+- **Season labels**: No more "Säsong 2024/25" - now dynamically resolved from FPL API
+- **Gameweek labels**: No more "Gameweek 38" - now shows actual current/last finished GW
+- **Highlights**: No more static names/points - now computed from live table data
+- **Fallback data**: Eliminated hardcoded highlights and demo objects
+
+### Dynamic Season & GW Resolution
+- **`resolveCurrentSeason()`** - Fetches from bootstrap-static events
+- **`resolveCurrentGW()`** - Finds current GW or latest finished GW
+- **No fallbacks**: Throws clear errors instead of defaulting to stale values
+- **DOM updates**: Automatically updates season and GW headings
+
+### Enhanced Data Validation
+- **EntryId validation**: Ensures all participants have numeric, positive entryId
+- **Data quality checks**: Monitors >60% data join failure threshold
+- **Health checks**: Enhanced to detect data join vs API vs configuration issues
+- **Dev assertions**: `console.assert()` for entryId validation in debug mode
+
+### Real API Data Flow
+- **Season table**: Uses manager summary or accumulated history for totalPoints
+- **Latest GW table**: Uses latest finished GW points from entry history
+- **Highlights**: Computed from table data when picks unavailable
+- **No zero masking**: Throws errors instead of `|| 0` / `|| 1` fallbacks
+
+### Debug Enhancements
+- **Season & GW info**: Added to `window.__DEBUG_FPL` object
+- **Data provenance**: Shows which endpoints populate totals and GW points
+- **Validation logging**: EntryId validation and data quality metrics
+- **Error classification**: Clear distinction between data join, API, and config issues
+
+### DOM Updates
+- **Season heading**: `Säsong 2024/25` → `Säsong 2025/26` (dynamic)
+- **GW heading**: `Gameweek 38` → `Gameweek X` (current/last finished)
+- **Page title**: Updated if contains season information
+- **Automatic updates**: Applied after bootstrap and participant resolution

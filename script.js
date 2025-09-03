@@ -1,5 +1,5 @@
 // Build information
-const BUILD_SHA = '7714af2'; // Current commit SHA for asset versioning
+const BUILD_SHA = 'c393a63'; // Current commit SHA for asset versioning
 const BUILD_BANNER = `[ÖrebroFPL] build ${BUILD_SHA} – tables=aggregate-only`;
 
 // Debug mode detection (URL-based toggle)
@@ -127,9 +127,17 @@ function getConfiguredParticipants() {
 
 // Normalize participant data to consistent format
 function normalizeParticipant(p) {
+  const entryId = Number(p.fplId ?? p.entryId ?? p.entry_id ?? p.id);
+  
+  // Validate entryId is numeric and positive
+  if (!Number.isFinite(entryId) || entryId <= 0) {
+    console.warn('[Normalize] Invalid entryId for participant:', p, 'entryId:', entryId);
+  }
+  
   return {
-    fplId: Number(p.fplId ?? p.entryId ?? p.entry_id ?? p.id),
-    displayName: p.displayName ?? p.namn ?? p.name ?? p.entry_name ?? `Manager ${p.fplId}`,
+    fplId: entryId,
+    entryId: entryId, // Add explicit entryId field for consistency
+    displayName: p.displayName ?? p.namn ?? p.name ?? p.entry_name ?? `Manager ${entryId}`,
     teamName: p.teamName ?? p.team_name ?? p.favoritlag ?? '',
     totalPoäng: p.totalPoäng ?? p.totalPoints ?? 0,
     favoritlag: p.favoritlag ?? p.teamName ?? '',
@@ -137,6 +145,7 @@ function normalizeParticipant(p) {
     image: p.image || generateAvatarDataURL((p.displayName || p.namn || 'M').charAt(0)),
     lastSeasonRank: p.lastSeasonRank ?? 'N/A',
     bestGameweek: p.bestGameweek ?? 0,
+    hasValidId: Number.isFinite(entryId) && entryId > 0,
     ...p,
   };
 }
@@ -209,18 +218,63 @@ async function resolveCurrentGW() {
     const bootstrap = await safeFetchBootstrap();
     // Find the latest finished GW or current GW
     const events = bootstrap?.events || [];
-    const current = events.find(e => e?.is_current) || events[events.length - 1];
+    
+    if (!events || events.length === 0) {
+      throw new Error('No events found in bootstrap data');
+    }
+    
+    // Find current GW (is_current: true) or latest finished GW
+    const current = events.find(e => e?.is_current) || 
+                   events.filter(e => e?.finished).pop() || 
+                   events[events.length - 1];
     
     if (current?.id) {
-      console.log('[GW] Resolved current GW:', current.id, 'is_current:', current.is_current);
+      console.log('[GW] Resolved current GW:', current.id, 'is_current:', current.is_current, 'finished:', current.finished);
       return current.id;
     }
     
-    console.warn('[GW] No events found in bootstrap, using fallback');
-    return 1;
+    throw new Error('No valid gameweek found in bootstrap data');
   } catch (e) {
-    console.warn('[GW] Failed to resolve current GW, using fallback:', e);
-    return 1;
+    console.error('[GW] Failed to resolve current GW:', e);
+    throw new Error(`Gameweek resolution failed: ${e.message}`);
+  }
+}
+
+// Helper to resolve current season from bootstrap
+async function resolveCurrentSeason() {
+  try {
+    const bootstrap = await safeFetchBootstrap();
+    const events = bootstrap?.events || [];
+    
+    if (!events || events.length === 0) {
+      throw new Error('No events found in bootstrap data');
+    }
+    
+    // Get season from first event (should be consistent across all events)
+    const firstEvent = events[0];
+    if (firstEvent?.season_name) {
+      console.log('[Season] Resolved season:', firstEvent.season_name);
+      return firstEvent.season_name;
+    }
+    
+    // Fallback: compute from current date and event deadlines
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const month = now.getMonth() + 1; // 0-indexed
+    
+    // FPL season typically starts in August (month 8)
+    if (month >= 8) {
+      const season = `${currentYear}/${(currentYear + 1).toString().slice(-2)}`;
+      console.log('[Season] Computed season from date:', season);
+      return season;
+    } else {
+      const season = `${currentYear - 1}/${currentYear.toString().slice(-2)}`;
+      console.log('[Season] Computed season from date:', season);
+      return season;
+    }
+  } catch (e) {
+    console.error('[Season] Failed to resolve current season:', e);
+    throw new Error(`Season resolution failed: ${e.message}`);
   }
 }
 
@@ -1770,9 +1824,13 @@ document.addEventListener('DOMContentLoaded', function() {
     loadFromLocalStorage(); // Load saved participant data
     
     // Run health checks after bootstrap
-    setTimeout(() => {
+    setTimeout(async () => {
         try {
             assertNoDeprecatedGlobals();
+            
+            // Update DOM headings with resolved season and GW
+            await updateDOMHeadings();
+            
             const health = runHealthChecks();
             if (health.ok) {
                 console.log('✅ Runtime health checks passed');
@@ -1926,6 +1984,12 @@ function normalizeAggregateRows({ ids, summaries, histories, gw }) {
       });
     }
 
+    // Dev-only validation
+    if (window.__DEBUG_MODE) {
+      console.assert(typeof fplId === 'number' && fplId > 0, 
+        `Invalid entryId in row builder: ${fplId} for ${displayName}`);
+    }
+    
     return {
       fplId,
       displayName,
@@ -1966,20 +2030,36 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
   
   // Add debug dump for inspection (only if debug mode enabled)
   if (window.__DEBUG_MODE) {
-    window.__DEBUG_FPL = {
-      participants: getConfiguredParticipants().map(normalizeParticipant),
-      sampleRow: rows[0],
-      gwInfo: { gw, currentGW: await resolveCurrentGW() },
-      apiSamples: {
-        summaries: summaries?.results?.slice(0, 2),
-        histories: histories?.results?.slice(0, 2),
-        entryIds: entryIds.slice(0, 2)
-      }
-    };
-    
-    console.table('👀 DEBUG: Participants', window.__DEBUG_FPL.participants);
-    console.table('👀 DEBUG: Sample Row', [window.__DEBUG_FPL.sampleRow]);
-    console.log('👀 DEBUG: GW Info', window.__DEBUG_FPL.gwInfo);
+    try {
+      const season = await resolveCurrentSeason();
+      const currentGW = await resolveCurrentGW();
+      
+      window.__DEBUG_FPL = {
+        participants: getConfiguredParticipants().map(normalizeParticipant),
+        sampleRow: rows[0],
+        season: season,
+        gwInfo: { gw, currentGW, resolvedSeason: season },
+        apiSamples: {
+          summaries: summaries?.results?.slice(0, 2),
+          histories: histories?.results?.slice(0, 2),
+          entryIds: entryIds.slice(0, 2)
+        }
+      };
+      
+      console.table('👀 DEBUG: Participants', window.__DEBUG_FPL.participants);
+      console.table('👀 DEBUG: Sample Row', [window.__DEBUG_FPL.sampleRow]);
+      console.log('👀 DEBUG: Season & GW Info', { season, currentGW, requestedGW: gw });
+      
+      // Data provenance footer
+      console.group('👀 DEBUG: Data Provenance');
+      console.log('📊 Totals source: /api/aggregate/summary');
+      console.log('📈 GW points source: /api/aggregate/history');
+      console.log('🌍 Season resolution: bootstrap-static events');
+      console.log('🎯 GW resolution: bootstrap-static events (is_current or latest finished)');
+      console.groupEnd();
+    } catch (error) {
+      console.error('👀 DEBUG: Failed to resolve season/GW:', error);
+    }
   }
 
   // reuse existing renderers (unchanged UI)
@@ -2037,6 +2117,39 @@ function showConfigurationErrorBanner(message) {
     showErrorBanner(new Error(message), 'error');
 }
 
+// Update DOM headings with resolved season and GW
+async function updateDOMHeadings() {
+    try {
+        const season = await resolveCurrentSeason();
+        const gw = await resolveCurrentGW();
+        
+        // Update season heading
+        const seasonLabel = document.querySelector('.gameweek-label');
+        if (seasonLabel && seasonLabel.textContent.includes('Säsong')) {
+            seasonLabel.textContent = `Säsong ${season}`;
+            console.log('[DOM] Updated season heading:', season);
+        }
+        
+        // Update GW heading
+        const gwLabel = document.getElementById('currentGameweekLabel');
+        if (gwLabel) {
+            gwLabel.textContent = `Gameweek ${gw}`;
+            console.log('[DOM] Updated GW heading:', gw);
+        }
+        
+        // Update page title if it contains season info
+        if (document.title.includes('2024/25')) {
+            document.title = document.title.replace('2024/25', season);
+        }
+        
+        return { season, gw };
+    } catch (error) {
+        console.error('[DOM] Failed to update headings:', error);
+        showErrorBanner(error, 'warning');
+        throw error;
+    }
+}
+
 // Show health check error banner (non-blocking)
 function showHealthCheckBanner(message) {
     showErrorBanner(new Error(`Health check failed: ${message}`), 'warning');
@@ -2057,10 +2170,23 @@ function runHealthChecks() {
         if (!participants || participants.length === 0) {
             throw new Error('No participants configured');
         }
+        
+        // Validate participants have valid entryId
+        const validParticipants = participants.filter(p => p.hasValidId);
+        if (validParticipants.length === 0) {
+            throw new Error('No participants with valid entryId found');
+        }
+        
+        if (validParticipants.length < participants.length * 0.8) { // Less than 80% valid
+            console.warn('[Health] Some participants lack valid entryId:', 
+                participants.length - validParticipants.length, 'of', participants.length);
+        }
+        
         health.checks.participants = {
             ok: true,
             count: participants.length,
-            message: `Found ${participants.length} participants`
+            validIds: validParticipants.length,
+            message: `Found ${participants.length} participants (${validParticipants.length} with valid entryId)`
         };
         
         // Check 2: Table data quality (if available)
@@ -2076,14 +2202,27 @@ function runHealthChecks() {
                 throw new Error('Table data shows invalid points (totalPoints or gwPoints is 0/1)');
             }
             
+            // Check data join quality - if >60% have zero/one points, data join likely failed
+            const validRows = window.__lastRows.filter(row => 
+                typeof row.totalPoints === 'number' && row.totalPoints > 0 &&
+                typeof row.gwPoints === 'number' && row.gwPoints > 1
+            );
+            
+            const dataQualityRatio = validRows.length / window.__lastRows.length;
+            if (dataQualityRatio < 0.4) { // Less than 40% valid data
+                throw new Error(`Data join failed: only ${Math.round(dataQualityRatio * 100)}% of participants have valid points`);
+            }
+            
             health.checks.tableData = {
                 ok: true,
                 sampleRow: {
                     totalPoints: sampleRow.totalPoints,
                     gwPoints: sampleRow.gwPoints,
-                    displayName: sampleRow.displayName
+                    displayName: sampleRow.displayName,
+                    entryId: sampleRow.fplId
                 },
-                message: 'Table data shows valid points'
+                dataQuality: `${Math.round(dataQualityRatio * 100)}% valid data`,
+                message: 'Table data shows valid points and good data quality'
             };
         } else {
             health.checks.tableData = {
@@ -2639,14 +2778,8 @@ async function calculateWeeklyHighlightsFromAPI() {
     
     // Note: This function uses picks data - should only be called for detail views, not tables
     if (!EAGER_FETCH_PICKS) {
-        console.log('⚠️ calculateWeeklyHighlightsFromAPI: picks fetching disabled, using fallback highlights');
-        // Use fallback highlights when picks are disabled
-        leagueData.highlights = {
-            rocket: 'Highlights disabled (no picks)',
-            flop: 'Highlights disabled (no picks)',
-            captain: 'Highlights disabled (no picks)',
-            bench: 'Highlights disabled (no picks)'
-        };
+        console.log('⚠️ calculateWeeklyHighlightsFromAPI: picks fetching disabled, highlights will be computed from table data');
+        // Don't set fallback highlights - let the table data drive highlights
         return;
     }
     
@@ -3171,10 +3304,11 @@ async function testAPIConnection() {
         
         if (playerTest.ok) {
             const playerData = await playerTest.json();
+            const season = await resolveCurrentSeason().catch(() => 'Unknown');
             console.log('🧪 Player test successful:', {
                 name: `${playerData.player_first_name} ${playerData.player_last_name}`,
                 points: playerData.summary_overall_points,
-                season: '2024/25'
+                season: season
             });
         } else {
             throw new Error(`Player API returned status: ${playerTest.status}`);
@@ -3650,6 +3784,36 @@ async function buildHighlight(entryId, gw) {
   return { entryId, points, captain, benchPoints };
 }
 
+// Compute highlights from table data (when picks are not available)
+function computeHighlightsFromTableData(seasonTable, gameweekTable) {
+    if (!seasonTable || !gameweekTable || seasonTable.length === 0 || gameweekTable.length === 0) {
+        return null;
+    }
+    
+    try {
+        // Veckans Raket - Highest gameweek points
+        const rocket = gameweekTable[0];
+        const rocketText = rocket ? `${rocket.name} - ${rocket.points} poäng` : 'Ingen data tillgänglig';
+        
+        // Veckans Sopa - Lowest gameweek points
+        const flop = gameweekTable[gameweekTable.length - 1];
+        const flopText = flop ? `${flop.name} - ${flop.points} poäng` : 'Ingen data tillgänglig';
+        
+        // Veckans Sämsta Kapten - Can't determine without picks, so omit
+        const captainText = 'Ingen data tillgänglig (kräver picks-data)';
+        
+        return {
+            rocket: rocketText,
+            flop: flopText,
+            captain: captainText,
+            source: 'table-data'
+        };
+    } catch (error) {
+        console.error('[Highlights] Failed to compute from table data:', error);
+        return null;
+    }
+}
+
 // Update highlights from gameweek data (resilient version)
 async function updateHighlightsFromData() {
     console.log('=== UPDATE HIGHLIGHTS FROM DATA (RESILIENT) ===');
@@ -3667,57 +3831,48 @@ async function updateHighlightsFromData() {
     const useMockData = DISABLE_API_CALLS || !leagueData.gameweekTable || leagueData.gameweekTable.length === 0;
     
     if (useMockData) {
-        console.log('Using mock data for highlights');
+        console.log('No real data available for highlights - showing placeholder');
         
-        // Check if participants are available
-        const participants = getConfiguredParticipants().map(normalizeParticipant);
-        if (!participants || participants.length === 0) {
-            console.error('CRITICAL ERROR: No participants available!');
-            weeklyRocketElement.textContent = 'Ingen data tillgänglig';
-            weeklyFlopElement.textContent = 'Ingen data tillgänglig';
-            return;
+        // Show placeholder when no real data is available
+        weeklyRocketElement.textContent = 'Ingen data tillgänglig ännu';
+        weeklyFlopElement.textContent = 'Ingen data tillgänglig ännu';
+        
+        const captainElement = document.getElementById('weeklyCaptain');
+        if (captainElement) {
+            captainElement.textContent = 'Ingen data tillgänglig ännu';
         }
         
-        // Use random participants for mock highlights
-        const shuffledParticipants = [...participants].sort(() => 0.5 - Math.random());
+        return;
         
-        // Generate realistic gameweek points (30-85 range for a single week)
-        const rocketPoints = Math.floor(Math.random() * 55) + 30; // 30-85 points
-        const flopPoints = Math.floor(Math.random() * 25) + 15; // 15-40 points
-        
-        // Veckans Raket - Random participant with high gameweek points
-        const rocket = shuffledParticipants[0];
-        weeklyRocketElement.textContent = `${rocket.namn} - ${rocketPoints} poäng`;
-        
-        // Veckans Sopa - Random participant with low gameweek points
-        const flop = shuffledParticipants[1];
-        weeklyFlopElement.textContent = `${flop.namn} - ${flopPoints} poäng`;
-        
-        // Mock captain data
-        const captain = shuffledParticipants[2];
-        document.getElementById('weeklyCaptain').textContent = `${captain.namn} - Haaland (2 poäng)`;
-        
-    } else {
+        } else {
         // Use real data from leagueData
         if (!leagueData.gameweekTable || leagueData.gameweekTable.length === 0) {
             console.error('CRITICAL ERROR: No gameweek data available!');
             return;
         }
         
-        // Veckans Raket - Highest gameweek points
-        const rocket = leagueData.gameweekTable[0];
-        weeklyRocketElement.textContent = `${rocket.name} - ${rocket.points} poäng`;
+        // Compute highlights from table data
+        const highlights = computeHighlightsFromTableData(leagueData.seasonTable, leagueData.gameweekTable);
         
-        // Veckans Sopa - Lowest gameweek points
-        const flop = leagueData.gameweekTable[leagueData.gameweekTable.length - 1];
-        weeklyFlopElement.textContent = `${flop.name} - ${flop.points} poäng`;
-        
-        // Use fallback captain and bench data if API is not available
-        if (bootstrapData.players && Object.keys(bootstrapData.players).length > 0) {
-            await fetchCaptainAndBenchData();
+        if (highlights) {
+            weeklyRocketElement.textContent = highlights.rocket;
+            weeklyFlopElement.textContent = highlights.flop;
+            
+            const captainElement = document.getElementById('weeklyCaptain');
+            if (captainElement) {
+                captainElement.textContent = highlights.captain;
+            }
+            
+            console.log('[Highlights] Updated from table data:', highlights);
         } else {
-            // Use fallback highlights
-            document.getElementById('weeklyCaptain').textContent = leagueData.highlights.captain;
+            console.warn('[Highlights] Could not compute highlights from table data');
+            weeklyRocketElement.textContent = 'Ingen data tillgänglig ännu';
+            weeklyFlopElement.textContent = 'Ingen data tillgänglig ännu';
+            
+            const captainElement = document.getElementById('weeklyCaptain');
+            if (captainElement) {
+                captainElement.textContent = 'Ingen data tillgänglig ännu';
+            }
         }
     }
     
