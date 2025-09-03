@@ -1,6 +1,79 @@
 // Build information
-const BUILD_SHA = '3c99e6c'; // Current commit SHA for asset versioning
+const BUILD_SHA = '5d6e7f8'; // Current commit SHA for asset versioning
 const BUILD_BANNER = `[ÖrebroFPL] build ${BUILD_SHA} – tables=aggregate-only`;
+
+// Debug probe to identify CORS/network issues at startup
+async function _debugProbe() {
+  const url = 'https://fantasy.premierleague.com/api/bootstrap-static/';
+  try {
+    console.log('[PROBE] Testing direct FPL API access...');
+    const res = await fetch(url, { cache: 'no-store', mode: 'cors' }); // NO custom headers
+    console.log('[PROBE] status=', res.status, 'acao=', res.headers.get('access-control-allow-origin'));
+    const j = await res.json();
+    console.log('[PROBE] ok, events len=', j?.events?.length);
+    return { success: true, status: res.status, eventsCount: j?.events?.length };
+  } catch (e) {
+    console.error('[PROBE] bootstrap-static failed:', e?.name, e?.message, e);
+    return { success: false, error: { name: e?.name, message: e?.message } };
+  }
+}
+
+// Execute debug probe if debug mode enabled
+if (typeof window !== 'undefined' && new URLSearchParams(location.search).get('debug') === 'true') {
+  _debugProbe().then(result => {
+    console.log('[PROBE] Result:', result);
+    window.__PROBE_RESULT = result;
+  });
+}
+
+// Unified FPL fetch helper with automatic fallback
+async function fplFetch(path, opts = {}) {
+  const directUrl = 'https://fantasy.premierleague.com' + path;
+  
+  try {
+    // Try direct FPL API first
+    console.log(`[FPL] Direct fetch: ${path}`);
+    const r = await fetch(directUrl, { 
+      cache: 'no-store', 
+      mode: 'cors',
+      ...opts 
+    });
+    
+    if (!r.ok) {
+      throw new Error(`HTTP ${r.status}`);
+    }
+    
+    console.log(`[FPL] Direct fetch successful: ${path}`);
+    return r;
+    
+  } catch (e) {
+    console.warn(`[FPL] Direct fetch failed for ${path}:`, e.name, e.message);
+    
+    // Fallback to same-origin data (from GitHub Actions sync)
+    try {
+      const fallbackUrl = `/data${path.replace('/api', '')}.json`;
+      console.log(`[FPL] Fallback to same-origin: ${fallbackUrl}`);
+      
+      const r2 = await fetch(fallbackUrl, { cache: 'no-store' });
+      
+      if (!r2.ok) {
+        throw new Error(`Fallback HTTP ${r2.status}`);
+      }
+      
+      console.log(`[FPL] Fallback successful: ${path}`);
+      return r2;
+      
+    } catch (fallbackError) {
+      console.error(`[FPL] Both direct and fallback failed for ${path}:`, {
+        direct: { name: e.name, message: e.message },
+        fallback: { name: fallbackError.name, message: fallbackError.message }
+      });
+      
+      // Re-throw the original error for proper error handling
+      throw e;
+    }
+  }
+}
 
 // Debug mode detection (URL-based toggle)
 const urlParams = new URLSearchParams(window.location.search);
@@ -2097,77 +2170,136 @@ function normalizeAggregateRows({ ids, summaries, histories, gw }) {
   });
 }
 
-// Tables loader (aggregates only; no /picks)
+// Tables loader with robust GW resolution and entry history joins
 async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
-  console.info('[Tables] Using aggregates only. No picks will be fetched here.');
-  console.info('[Tables] Entry IDs:', entryIds.slice(0, 5), 'GW:', gw);
+  console.info('[Tables] Loading with robust GW resolution and entry history joins');
+  console.info('[Tables] Entry IDs:', entryIds.slice(0, 5), 'Requested GW:', gw);
   
-  // Fetch aggregate data
-  const summaries = await fetchAggregateSummaries(entryIds);
-  const histories = await fetchAggregateHistory(entryIds, gw);
-  
-  // Debug flag & one-shot logs (dev only; no UI change)
-  const DEBUG_AGG = true; // set to false later
-  if (DEBUG_AGG) {
-    console.info('[Agg] summaries sample:', summaries?.results?.slice(0,1)[0]);
-    console.info('[Agg] histories sample:', histories?.results?.slice(0,1)[0]);
-    console.info('[Agg] summaries count:', summaries?.results?.length);
-    console.info('[Agg] histories count:', histories?.results?.length);
-  }
-  
-  // Normalize into canonical row shape
-  const rows = normalizeAggregateRows({ ids: entryIds, summaries, histories, gw });
-  console.info('[Tables] normalized sample:', rows.slice(0,3));
-  
-  // Store for debug utilities
-  window.__lastRows = rows;
-  
-  // Add debug dump for inspection (only if debug mode enabled)
-  if (window.__DEBUG_MODE) {
-    try {
-      const season = await resolveCurrentSeason();
-      const currentGW = await resolveCurrentGW();
-      
-      window.__DEBUG_FPL = {
-        participants: getConfiguredParticipants().map(normalizeParticipant),
-        sampleRow: rows[0],
-        season: season,
-        gwInfo: { gw, currentGW, resolvedSeason: season },
-        apiSamples: {
-          summaries: summaries?.results?.slice(0, 2),
-          histories: histories?.results?.slice(0, 2),
-          entryIds: entryIds.slice(0, 2)
-        }
-      };
-      
-      // Debug participants table (first 5 with key fields)
-      console.table('👀 DEBUG: Participants (first 5)', 
-        window.__DEBUG_FPL.participants.slice(0, 5).map(p => ({
-          displayName: p.displayName,
-          entryId: p.entryId,
-          teamName: p.teamName,
-          hasValidId: p.hasValidId
-        }))
-      );
-      
-      console.table('👀 DEBUG: Sample Row', [window.__DEBUG_FPL.sampleRow]);
-      console.log('👀 DEBUG: Season & GW Info', { season, currentGW, requestedGW: gw });
-      
-      // Data provenance footer
-      console.group('👀 DEBUG: Data Provenance');
-      console.log('📊 Totals source: /api/aggregate/summary');
-      console.log('📈 GW points source: /api/aggregate/history');
-      console.log('🌍 Season resolution: bootstrap-static events');
-      console.log('🎯 GW resolution: bootstrap-static events (is_current or latest finished)');
-      console.groupEnd();
-    } catch (error) {
-      console.error('👀 DEBUG: Failed to resolve season/GW:', error);
+  try {
+    // Step 1: Resolve latest finished GW as single source of truth
+    const latestGw = await resolveLatestFinishedGw();
+    console.info('[Tables] Latest finished GW resolved:', latestGw);
+    
+    // Step 2: Fetch entry history for each participant with concurrency control
+    const participants = getConfiguredParticipants().map(normalizeParticipant);
+    const validParticipants = participants.filter(p => p.hasValidId);
+    
+    if (validParticipants.length === 0) {
+      throw new Error('No participants with valid entryId found');
     }
+    
+    console.info('[Tables] Processing', validParticipants.length, 'valid participants');
+    
+    // Worker function to fetch and compute data for each participant
+    const worker = async (participant) => {
+      try {
+        const history = await fetchEntryHistory(participant.entryId);
+        const { seasonTotal, latestGwPoints } = computeSeasonAndGw(history, latestGw);
+        
+        return {
+          fplId: participant.entryId,
+          entryId: participant.entryId,
+          displayName: participant.displayName,
+          teamName: participant.teamName,
+          totalPoints: seasonTotal,
+          latestGw: latestGw,
+          latestGwPoints: latestGwPoints,
+          gwPoints: latestGwPoints, // For backward compatibility
+          hasValidId: true,
+          raw: participant.raw
+        };
+      } catch (error) {
+        console.error(`[Worker] Failed for participant ${participant.entryId}:`, error);
+        return {
+          fplId: participant.entryId,
+          entryId: participant.entryId,
+          displayName: participant.displayName,
+          teamName: participant.teamName,
+          totalPoints: 0,
+          latestGw: latestGw,
+          latestGwPoints: 0,
+          gwPoints: 0,
+          hasValidId: true,
+          error: error.message
+        };
+      }
+    };
+    
+    // Process participants with concurrency control
+    const rows = await mapWithConcurrency(validParticipants, worker, 6);
+    console.info('[Tables] Processed', rows.length, 'participants with concurrency');
+    
+    // Store for debug utilities and health checks
+    window.__lastRows = rows;
+    
+    // Add debug dump for inspection (only if debug mode enabled)
+    if (window.__DEBUG_MODE) {
+      try {
+        const season = await resolveCurrentSeason();
+        
+        window.__DEBUG_FPL = {
+          participants: validParticipants,
+          sampleRow: rows[0],
+          season: season,
+          gwInfo: { requestedGw: gw, latestGw, resolvedSeason: season },
+          apiSamples: {
+            entryIds: validParticipants.map(p => p.entryId).slice(0, 5),
+            sampleHistory: rows[0]
+          }
+        };
+        
+        // Debug participants table (first 5 with key fields)
+        console.table('👀 DEBUG: Participants (first 5)', 
+          window.__DEBUG_FPL.participants.slice(0, 5).map(p => ({
+            displayName: p.displayName,
+            entryId: p.entryId,
+            teamName: p.teamName,
+            hasValidId: p.hasValidId
+          }))
+        );
+        
+        console.table('👀 DEBUG: Sample Row', [window.__DEBUG_FPL.sampleRow]);
+        console.log('👀 DEBUG: Season & GW Info', { season, latestGw, requestedGw: gw });
+        
+        // Data provenance footer
+        console.group('👀 DEBUG: Data Provenance');
+        console.log('📊 Totals source: /api/entry/{id}/history/ (total_points)');
+        console.log('📈 GW points source: /api/entry/{id}/history/ (points)');
+        console.log('🌍 Season resolution: bootstrap-static events');
+        console.log('🎯 GW resolution: bootstrap-static events (finished || data_checked)');
+        console.groupEnd();
+      } catch (error) {
+        console.error('👀 DEBUG: Failed to resolve season/GW:', error);
+      }
+    }
+    
+    // Step 3: Update DOM headings with resolved season and GW
+    await updateDOMHeadings();
+    
+    // Step 4: Render tables with the computed data
+    populateSeasonTable?.(rows, bootstrap);
+    populateGameweekTable?.(rows, bootstrap, latestGw);
+    
+    console.info('[Tables] Successfully loaded with', rows.length, 'rows, GW:', latestGw);
+    
+  } catch (error) {
+    console.error('[Tables] Failed to load tables:', error);
+    
+    // Show specific error banner based on error type
+    if (error.message.includes('No participants with valid entryId')) {
+      showErrorBanner(error, 'error');
+    } else if (error.message.includes('CORS/Network issue')) {
+      showErrorBanner(new Error('FPL API not accessible from browser. Using fallback data.'), 'warning');
+    } else if (error.message.includes('bootstrap-static failed')) {
+      showErrorBanner(new Error('FPL API temporarily unavailable'), 'warning');
+    } else {
+      showErrorBanner(error, 'error');
+    }
+    
+    // Don't render tables with invalid data
+    populateSeasonTable?.([], bootstrap);
+    populateGameweekTable?.([], bootstrap, 0);
   }
-
-  // reuse existing renderers (unchanged UI)
-  populateSeasonTable?.(rows, bootstrap);
-  populateGameweekTable?.(rows, bootstrap, gw);
 }
 
 // Single helper to map exceptions to user banners
@@ -4719,10 +4851,8 @@ window.adminLogin = function() {
 // Robust GW resolver - single source of truth for latest finished GW
 async function resolveLatestFinishedGw() {
   try {
-    const res = await fetch('https://fantasy.premierleague.com/api/bootstrap-static/', { 
-      cache: 'no-store', 
-      mode: 'cors' 
-    });
+    console.log('[GW] Resolving latest finished GW...');
+    const res = await fplFetch('/api/bootstrap-static/');
     
     if (!res.ok) {
       throw new Error(`bootstrap-static failed: ${res.status}`);
@@ -4734,6 +4864,8 @@ async function resolveLatestFinishedGw() {
     if (events.length === 0) {
       throw new Error('No events found in bootstrap-static');
     }
+    
+    console.log(`[GW] Found ${events.length} events, checking for finished ones...`);
     
     // Prefer events with finished || data_checked
     const finished = events.filter(e => e.finished === true || e.data_checked === true);
@@ -4756,7 +4888,13 @@ async function resolveLatestFinishedGw() {
     
     throw new Error('No GW resolvable from bootstrap-static');
   } catch (error) {
-    console.error('[GW] Failed to resolve latest finished GW:', error);
+    console.error('[GW] Failed to resolve latest finished GW:', error.name, error.message);
+    
+    // Provide more specific error context
+    if (error.name === 'TypeError' && error.message.includes('Load failed')) {
+      throw new Error('CORS/Network issue: FPL API not accessible from browser. Using fallback data.');
+    }
+    
     throw error;
   }
 }
@@ -4764,16 +4902,25 @@ async function resolveLatestFinishedGw() {
 // Fetch entry history for a specific participant with retry
 async function fetchEntryHistory(entryId) {
   try {
-    const url = `https://fantasy.premierleague.com/api/entry/${entryId}/history/`;
-    const res = await fetch(url, { cache: 'no-store', mode: 'cors' });
+    console.log(`[History] Fetching history for entry ${entryId}...`);
+    const res = await fplFetch(`/api/entry/${entryId}/history/`);
     
     if (!res.ok) {
       throw new Error(`history ${entryId} failed: ${res.status}`);
     }
     
-    return await res.json();
+    const data = await res.json();
+    console.log(`[History] Successfully fetched history for entry ${entryId}`);
+    return data;
+    
   } catch (error) {
-    console.error(`[History] Failed to fetch history for ${entryId}:`, error);
+    console.error(`[History] Failed to fetch history for ${entryId}:`, error.name, error.message);
+    
+    // Provide more specific error context
+    if (error.name === 'TypeError' && error.message.includes('Load failed')) {
+      throw new Error(`CORS/Network issue: Cannot fetch history for entry ${entryId}. Using fallback data.`);
+    }
+    
     throw error;
   }
 }
