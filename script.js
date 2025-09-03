@@ -1,5 +1,5 @@
 // Build information
-const BUILD_SHA = '7g8h9i0'; // Current commit SHA for asset versioning
+const BUILD_SHA = '8h9i0j1'; // Current commit SHA for asset versioning
 const BUILD_BANNER = `[ÖrebroFPL] build ${BUILD_SHA} – tables=aggregate-only`;
 
 // Debug probe to identify CORS/network issues and check fallback data
@@ -78,6 +78,26 @@ if (FORCE_FALLBACK || FORCE_DIRECT) {
   console.warn(`[DEV] Test flag enabled: ${FORCE_FALLBACK ? 'FORCE_FALLBACK' : 'FORCE_DIRECT'}`);
 }
 
+// Debug GW probe for troubleshooting (debug mode only)
+if (typeof window !== 'undefined' && new URLSearchParams(location.search).get('debug') === 'true') {
+  window.__DEBUG_FPL = window.__DEBUG_FPL || {};
+  window.__DEBUG_FPL.gwProbe = async () => {
+    try {
+      console.log('[GW PROBE] Testing fplFetch with bootstrap-static...');
+      const r = await fplFetch('/api/bootstrap-static/');
+      const j = await r.json();
+      const gw = deriveLatestFinishedGw(j);
+      console.log('[GW PROBE] source OK, gw=', gw, 'events=', j?.events?.length, 'source=', r._source);
+      return { success: true, gw, events: j?.events?.length, source: r._source };
+    } catch (e) {
+      console.error('[GW PROBE] failed after fallback:', e.message);
+      return { success: false, error: e.message };
+    }
+  };
+  
+  console.log('[DEBUG] GW probe available: window.__DEBUG_FPL.gwProbe()');
+}
+
 // Robust base resolver for GitHub Pages subpath
 function getBaseUrl() {
   // Check for <base> tag first
@@ -111,8 +131,8 @@ async function fplFetch(path, opts = {}) {
     throw new Error('FORCE_FALLBACK: Simulating direct API failure');
   }
   
+  // Always try direct first (unless forced to fallback)
   try {
-    // Try direct FPL API first (unless forced to fallback)
     console.log(`[FPL] Direct fetch: ${path}`);
     const r = await fetch(directUrl, { 
       cache: 'no-store', 
@@ -120,69 +140,67 @@ async function fplFetch(path, opts = {}) {
       ...opts 
     });
     
-    if (!r.ok) {
-      throw new Error(`HTTP ${r.status}`);
+    if (r.ok) {
+      console.log(`[FPL] Direct fetch successful: ${path}`);
+      
+      // Mark response as direct for debugging
+      r._isFallback = false;
+      r._source = 'direct';
+      
+      return r;
     }
     
-    console.log(`[FPL] Direct fetch successful: ${path}`);
-    
-    // Mark response as direct for debugging
-    r._isFallback = false;
-    r._source = 'direct';
-    
-    return r;
+    // Non-2xx status - fall through to fallback
+    console.warn(`[FPL] Direct fetch returned ${r.status}, trying fallback`);
     
   } catch (e) {
     console.warn(`[FPL] Direct fetch failed for ${path}:`, e.name, e.message);
-    
-    // Bulletproof fallback to same-origin data (from GitHub Actions sync)
-    try {
-      let fallbackPath;
-      
-      if (path === '/api/bootstrap-static/') {
-        fallbackPath = 'data/bootstrap-static.json';
-      } else if (path.startsWith('/api/entry/') && path.endsWith('/history/')) {
-        const entryId = path.match(/\/api\/entry\/(\d+)\/history\//)?.[1];
-        if (entryId) {
-          fallbackPath = `data/entry/${entryId}/history.json`;
-        } else {
-          throw new Error(`Invalid entry path: ${path}`);
-        }
-      } else {
-        throw new Error(`No fallback mapping for path: ${path}`);
-      }
-      
-      const fallbackUrl = dataUrl(fallbackPath);
-      console.log(`[FPL] Fallback to same-origin: ${fallbackUrl}`);
-      
-      const r2 = await fetch(fallbackUrl, { cache: 'no-store' });
-      
-      if (!r2.ok) {
-        if (r2.status === 404) {
-          throw new Error(`Fallback missing: ${fallbackPath} (404) - GitHub Action may not have synced yet`);
-        }
-        throw new Error(`Fallback HTTP ${r2.status}`);
-      }
-      
-      console.log(`[FPL] Fallback successful: ${path} -> ${fallbackPath}`);
-      
-      // Mark response as fallback for debugging
-      r2._isFallback = true;
-      r2._fallbackPath = fallbackPath;
-      r2._source = 'fallback';
-      
-      return r2;
-      
-    } catch (fallbackError) {
-      console.error(`[FPL] Both direct and fallback failed for ${path}:`, {
-        direct: { name: e.name, message: e.message },
-        fallback: { name: fallbackError.name, message: fallbackError.message }
-      });
-      
-      // Re-throw the original error for proper error handling
-      throw e;
-    }
+    // Swallow direct errors and try fallback
   }
+  
+  // Bulletproof fallback to same-origin data (from GitHub Actions sync)
+  try {
+    const fallbackPath = mapApiToFallback(path);
+    const fallbackUrl = dataUrl(fallbackPath);
+    console.log(`[FPL] Fallback to same-origin: ${fallbackUrl}`);
+    
+    const r2 = await fetch(fallbackUrl, { cache: 'no-store' });
+    
+    if (!r2.ok) {
+      if (r2.status === 404) {
+        throw new Error(`Fallback missing: ${fallbackPath} (404) - GitHub Action may not have synced yet`);
+      }
+      throw new Error(`Fallback HTTP ${r2.status}`);
+    }
+    
+    console.log(`[FPL] Fallback successful: ${path} -> ${fallbackPath}`);
+    
+    // Mark response as fallback for debugging
+    r2._isFallback = true;
+    r2._fallbackPath = fallbackPath;
+    r2._source = 'fallback';
+    
+    return r2;
+    
+  } catch (fallbackError) {
+    console.error(`[FPL] Both direct and fallback failed for ${path}:`, {
+      direct: 'failed or non-2xx',
+      fallback: { name: fallbackError.name, message: fallbackError.message }
+    });
+    
+    // Only throw if both paths failed
+    throw new Error(`fplFetch failed (direct+fallback): ${path} - ${fallbackError.message}`);
+  }
+}
+
+// Map API paths to fallback file paths
+function mapApiToFallback(path) {
+  if (path === '/api/bootstrap-static/') return 'data/bootstrap-static.json';
+  
+  const m = path.match(/^\/api\/entry\/(\d+)\/history\/$/);
+  if (m) return `data/entry/${m[1]}/history.json`;
+  
+  throw new Error(`No fallback mapping for ${path}`);
 }
 
 // Debug mode detection (URL-based toggle)
@@ -2286,9 +2304,15 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
   console.info('[Tables] Entry IDs:', entryIds.slice(0, 5), 'Requested GW:', gw);
   
   try {
-    // Step 1: Resolve latest finished GW as single source of truth
+    // Step 1: Resolve latest finished GW as single source of truth (with fallback guarantee)
+    console.info('[Tables] Resolving latest finished GW...');
     const latestGw = await resolveLatestFinishedGw();
     console.info('[Tables] Latest finished GW resolved:', latestGw);
+    
+    // Validate GW is a positive integer
+    if (!Number.isInteger(latestGw) || latestGw <= 0) {
+      throw new Error(`Invalid GW resolved: ${latestGw} (must be positive integer)`);
+    }
     
     // Step 2: Fetch entry history for each participant with concurrency control
     const participants = getConfiguredParticipants().map(normalizeParticipant);
@@ -2475,6 +2499,16 @@ async function loadTablesViewUsingAggregates(entryIds, gw, bootstrap){
       showStatus('error', `Fallback data not available: ${error.message}`, { 
         details: 'GitHub Action may not have synced yet. Check Actions tab.',
         persistent: true 
+      });
+    } else if (error.message.includes('GW resolution failed after fallback')) {
+      showStatus('error', `Gameweek resolution failed: ${error.message}`, {
+        details: 'Both direct API and fallback data failed. Check network and GitHub Actions.',
+        persistent: true
+      });
+    } else if (error.message.includes('Invalid GW resolved')) {
+      showStatus('error', `Invalid gameweek value: ${error.message}`, {
+        details: 'GW resolution succeeded but returned invalid value.',
+        persistent: true
       });
     } else if (error.message.includes('bootstrap-static failed')) {
       showStatus('warn', 'FPL API temporarily unavailable');
@@ -5072,44 +5106,70 @@ async function resolveLatestFinishedGw() {
     }
     
     const boot = await res.json();
-    const events = Array.isArray(boot?.events) ? boot.events : [];
+    const gw = deriveLatestFinishedGw(boot);
     
-    if (events.length === 0) {
-      throw new Error('No events found in bootstrap-static');
+    console.log(`[GW] Resolved GW ${gw} from ${res._source || 'unknown'} source`);
+    return gw;
+    
+  } catch (directErr) {
+    console.warn('[GW] Direct fetch failed, trying explicit fallback:', directErr.message);
+    
+    // If fplFetch already tried fallback internally and still threw, we need an explicit fallback here
+    try {
+      const url = dataUrl('data/bootstrap-static.json');
+      console.log('[GW] Explicit fallback to:', url);
+      
+      const res2 = await fetch(url, { cache: 'no-store' });
+      if (!res2.ok) {
+        throw new Error(`Fallback bootstrap not found: ${res2.status}`);
+      }
+      
+      const boot2 = await res2.json();
+      const gw2 = deriveLatestFinishedGw(boot2);
+      
+      console.log(`[GW] Fallback successful, resolved GW ${gw2}`);
+      return gw2;
+      
+    } catch (fallbackErr) {
+      console.error('[GW] Both direct and fallback failed:', {
+        direct: directErr.message,
+        fallback: fallbackErr.message
+      });
+      
+      // Only here do we surface a banner - both paths failed
+      throw new Error(`GW resolution failed after fallback: ${fallbackErr.message}`);
     }
-    
-    console.log(`[GW] Found ${events.length} events, checking for finished ones...`);
-    
-    // Prefer events with finished || data_checked
-    const finished = events.filter(e => e.finished === true || e.data_checked === true);
-    if (finished.length > 0) {
-      const latestFinished = Math.max(...finished.map(e => e.id || e.event));
-      console.log('[GW] Latest finished GW:', latestFinished, 'from', finished.length, 'finished events');
-      return latestFinished;
-    }
-    
-    // Fallback: event with is_current true and deadline passed
-    const now = Date.now();
-    const current = events.find(e => e.is_current === true) || 
-                   events.find(e => new Date(e.deadline_time).getTime() <= now);
-    
-    if (current?.id || current?.event) {
-      const fallbackGw = current.id ?? current.event;
-      console.log('[GW] Fallback GW (current/deadline passed):', fallbackGw);
-      return fallbackGw;
-    }
-    
-    throw new Error('No GW resolvable from bootstrap-static');
-  } catch (error) {
-    console.error('[GW] Failed to resolve latest finished GW:', error.name, error.message);
-    
-    // Provide more specific error context
-    if (error.name === 'TypeError' && error.message.includes('Load failed')) {
-      throw new Error('CORS/Network issue: FPL API not accessible from browser. Using fallback data.');
-    }
-    
-    throw error;
   }
+}
+
+// Extract GW derivation logic for reuse
+function deriveLatestFinishedGw(boot) {
+  const events = Array.isArray(boot?.events) ? boot.events : [];
+  
+  if (events.length === 0) {
+    throw new Error('No events found in bootstrap-static');
+  }
+  
+  console.log(`[GW] Found ${events.length} events, checking for finished ones...`);
+  
+  // Prefer events with finished || data_checked
+  const finished = events.filter(e => e.finished === true || e.data_checked === true);
+  if (finished.length > 0) {
+    const latestFinished = Math.max(...finished.map(e => Number(e.id ?? e.event)));
+    console.log('[GW] Latest finished GW:', latestFinished, 'from', finished.length, 'finished events');
+    return latestFinished;
+  }
+  
+  // Fallback: last event whose deadline has passed
+  const now = Date.now();
+  const past = events.filter(e => new Date(e.deadline_time).getTime() <= now);
+  if (past.length > 0) {
+    const fallbackGw = Math.max(...past.map(e => Number(e.id ?? e.event)));
+    console.log('[GW] Fallback GW (deadline passed):', fallbackGw);
+    return fallbackGw;
+  }
+  
+  throw new Error('No usable events in bootstrap (no finished, data_checked, or past deadline)');
 }
 
 // Fetch entry history for a specific participant with retry
