@@ -73,3 +73,71 @@ export function computeWeeklyHighlights(aggregates) {
 
 export default { computeWeeklyHighlights };
 
+/**
+ * Pick bottom N by gwPoints with deterministic tie-breakers.
+ * Tie-break: lower totalPoints, then higher overallRank, then name A→Z
+ * @param {WeeklyAggregate[]} aggregates
+ * @param {number} n
+ */
+export function pickBottomN(aggregates, n = 3) {
+  const arr = Array.isArray(aggregates) ? aggregates.slice() : [];
+  const sorted = arr.sort((a, b) => {
+    const ga = Number(a?.gwPoints || 0);
+    const gb = Number(b?.gwPoints || 0);
+    if (ga !== gb) return ga - gb; // asc (bottom)
+    const ta = Number(a?.totalPoints || 0);
+    const tb = Number(b?.totalPoints || 0);
+    if (ta !== tb) return ta - tb; // lower total first
+    const ra = Number(a?.overallRank || 1e12);
+    const rb = Number(b?.overallRank || 1e12);
+    if (ra !== rb) return rb - ra; // higher rank number (worse) first
+    return String(a?.playerName || '').localeCompare(String(b?.playerName || ''));
+  });
+  return sorted.slice(0, n);
+}
+
+/**
+ * Compute beer merit levels from deviation to average gw points.
+ * Returns array with { ...agg, level: string, className: 'green'|'yellow'|'red', delta: number }
+ * @param {WeeklyAggregate[]} aggregates
+ * @param {{ thresholds?: { legend:number, strong:number, solid:number, weak:number } }} [cfg]
+ */
+export function computeBeerLevels(aggregates, cfg = {}) {
+  const arr = Array.isArray(aggregates) ? aggregates : [];
+  if (arr.length === 0) return [];
+  const avg = arr.reduce((s, r) => s + Number(r?.gwPoints || 0), 0) / arr.length;
+  const t = Object.assign({ legend: 20, strong: 10, solid: 0, weak: -10 }, cfg.thresholds || {});
+  return arr.map(r => {
+    const delta = Math.round(Number(r?.gwPoints || 0) - avg);
+    let level = 'Solid';
+    let className = 'yellow';
+    if (delta >= t.legend) { level = 'Legend'; className = 'green'; }
+    else if (delta >= t.strong) { level = 'Strong'; className = 'green'; }
+    else if (delta >= t.solid) { level = 'Solid'; className = 'yellow'; }
+    else if (delta >= t.weak) { level = 'Weak'; className = 'red'; }
+    else { level = 'Buy-the-round'; className = 'red'; }
+    return Object.assign({}, r, { level, className, delta });
+  });
+}
+
+/**
+ * Pick top/bottom N for Wall of Fame/Shame by gwPoints (deterministic ties)
+ * @param {WeeklyAggregate[]} aggregates
+ * @param {number} n
+ */
+export function pickWallSets(aggregates, n = 3) {
+  const arr = Array.isArray(aggregates) ? aggregates.slice() : [];
+  const cmp = (a, b) => {
+    const ga = Number(a?.gwPoints || 0);
+    const gb = Number(b?.gwPoints || 0);
+    if (gb !== ga) return gb - ga; // desc for top
+    const ta = Number(a?.totalPoints || 0);
+    const tb = Number(b?.totalPoints || 0);
+    if (tb !== ta) return tb - ta; // higher total first
+    return String(a?.playerName || '').localeCompare(String(b?.playerName || ''));
+  };
+  const top = arr.slice().sort(cmp).slice(0, n);
+  const bottom = arr.slice().sort((a, b) => -cmp(a, b)).slice(0, n);
+  return { top, bottom };
+}
+

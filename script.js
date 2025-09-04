@@ -1037,7 +1037,7 @@ window.getAggregateRows = async function() {
 window.__renderHighlights__ = async function(opts){
   try {
     const mod = await import('./src/highlights/index.js');
-    return mod.renderHighlights(opts);
+    return mod.mountHighlights(opts);
   } catch (e) {
     console.warn('[Highlights] dynamic import failed:', e?.message);
   }
