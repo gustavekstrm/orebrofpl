@@ -1092,6 +1092,41 @@ function safeInit() {
       activateTab(a.dataset.tab);
     });
     activateTab('season');
+
+    // Attempt to mount highlights when tables/aggregates are ready
+    (async function tryMountHighlights(){
+      const start = performance.now();
+      // Poll briefly for getAggregateRows
+      const waitFor = async (pred, timeout=2000) => {
+        const t0 = performance.now();
+        while (performance.now() - t0 < timeout) {
+          if (pred()) return true;
+          await new Promise(r => setTimeout(r, 100));
+        }
+        return false;
+      };
+      try {
+        const ok = await waitFor(() => typeof window.getAggregateRows === 'function');
+        if (!ok) return;
+        const latestGw = await getLatestGwOnce();
+        if (typeof window.__renderHighlights__ === 'function') {
+          await window.__renderHighlights__({
+            gw: latestGw,
+            entryIds: Array.isArray(window.ENTRY_IDS) ? window.ENTRY_IDS : [],
+            selectors: {
+              roast: document.querySelector('#roastGrid,[data-role="roast"]') ? '#roastGrid,[data-role="roast"]' : null,
+              beer: document.querySelector('#beerGrid,[data-role="beer"]') ? '#beerGrid,[data-role="beer"]' : null,
+              fame: document.querySelector('#fameStats,[data-role="wall-fame"]') ? '#fameStats,[data-role="wall-fame"]' : null,
+              shame: document.querySelector('#shameStats,[data-role="wall-shame"]') ? '#shameStats,[data-role="wall-shame"]' : null
+            },
+            context: { allowPicksInHighlights: false }
+          });
+          console.debug('[highlights] mount ok in', Math.round(performance.now() - start), 'ms');
+        }
+      } catch (e) {
+        console.warn('[highlights] mount failed:', e?.message || e);
+      }
+    })();
   })();
   // Load manifest first (non-fatal), then initialize
   loadManifest().finally(() => { void initializeApp(); });

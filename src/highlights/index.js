@@ -58,6 +58,13 @@ export async function mountHighlights(opts) {
         if (!fame) console.warn('[highlights] Missing container:', fameSel);
         if (!shame) console.warn('[highlights] Missing container:', shameSel);
       }
+      // Debug available containers map
+      console.debug('[highlights] containers', {
+        roast: !!document.querySelector(roastSel),
+        beer: !!document.querySelector(beerSel),
+        fame: !!document.querySelector(fameSel),
+        shame: !!document.querySelector(shameSel)
+      });
     } catch (e) {
       console.warn('[highlights] aux render failed:', e?.message || e);
     }
