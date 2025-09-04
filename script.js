@@ -1,6 +1,7 @@
 // Build information
-const BUILD_SHA = '4p5q6r7'; // Current commit SHA for asset versioning
+const BUILD_SHA = '5s6t7u8'; // Current commit SHA for asset versioning
 const BUILD_BANNER = `[ÖrebroFPL] build ${BUILD_SHA} – tables=aggregate-only`;
+let DATA_SHA = null; // updated from data/manifest.json if available
 
 // ---- BASE + version ----
 // 1) Prefer <base href> if present
@@ -45,11 +46,34 @@ if (typeof window !== 'undefined' && typeof location !== 'undefined' && new URLS
 
 function dataUrl(relativePath) {
   // relativePath like 'data/bootstrap-static.json' OR `data/entry/${id}/history.json`
-  const url = new URL(`${relativePath}?v=${BUILD_SHA}`, BASE).toString();
+  const ver = DATA_SHA || BUILD_SHA;
+  const url = new URL(`${relativePath}?v=${ver}`, BASE).toString();
   if (typeof window !== 'undefined' && typeof location !== 'undefined' && new URLSearchParams(location.search).get('debug') === 'true') {
     console.log(`[dataUrl] ${relativePath} -> ${url}`);
   }
   return url;
+}
+
+// Load data manifest to pick up data sha/version and freshness info (non-fatal)
+async function loadManifest() {
+  try {
+    const u = new URL(`data/manifest.json?v=${BUILD_SHA}`, BASE).toString();
+    const r = await fetch(u, { cache: 'no-store' });
+    if (!r.ok) return;
+    const j = await r.json();
+    DATA_SHA = (j?.sha || '').slice(0, 7) || null;
+    if (typeof window !== 'undefined') {
+      window.__DEBUG_FPL = window.__DEBUG_FPL || {};
+      window.__DEBUG_FPL.fallback = Object.assign({}, window.__DEBUG_FPL.fallback || {}, {
+        lastSync: j?.lastSync,
+        idsCount: Array.isArray(j?.ids) ? j.ids.length : undefined,
+        sha: j?.sha
+      });
+    }
+    console.log('[Manifest] Loaded manifest, DATA_SHA =', DATA_SHA);
+  } catch (e) {
+    console.warn('[Manifest] Could not load manifest:', e.message);
+  }
 }
 
 // Test flags for development (dev-only, never commit defaults)
@@ -466,6 +490,21 @@ if (typeof window !== 'undefined') {
   window.__DEBUG_MODE = __DEBUG_MODE;
 }
 
+// Dev-only guard to catch accidental direct FPL fetches (logs only)
+if (__DEBUG_MODE) {
+  (function guardDirectFPL(){
+    const _fetch = window.fetch;
+    window.fetch = function(url, opts){
+      try{
+        if (typeof url === 'string' && url.includes('fantasy.premierleague.com/api/')) {
+          console.error('[BLOCKED] Direct FPL fetch detected. Use fplFetch(). URL=', url);
+        }
+      }catch{}
+      return _fetch.apply(this, arguments);
+    };
+  })();
+}
+
 // Configuration
 console.log('=== SCRIPT.JS LOADING ===');
 console.info(BUILD_BANNER);
@@ -481,19 +520,8 @@ async function _debugProbe() {
     baseUrl: BASE
   };
   
-  // Test direct FPL API access
-  const url = 'https://fantasy.premierleague.com/api/bootstrap-static/';
-  try {
-    console.log('[PROBE] Testing direct FPL API access...');
-    const res = await fetch(url, { cache: 'no-store', mode: 'cors' }); // NO custom headers
-    console.log('[PROBE] status=', res.status, 'acao=', res.headers.get('access-control-allow-origin'));
-    const j = await res.json();
-    console.log('[PROBE] ok, events len=', j?.events?.length);
-    results.direct = { success: true, status: res.status, eventsCount: j?.events?.length };
-  } catch (e) {
-    console.error('[PROBE] bootstrap-static failed:', e?.name, e?.message, e);
-    results.direct = { success: false, error: { name: e?.name, message: e?.message } };
-  }
+  // Skip direct API probe in production to avoid CORS noise; rely on fplFetch
+  results.direct = { skipped: true };
   
   // Test fallback data availability
   try {
@@ -968,7 +996,52 @@ function safeInit() {
     window.addEventListener('error',  e => console.error('[ONERROR]', e.message, e.filename, e.lineno, e.colno, e.error?.stack));
     window.addEventListener('unhandledrejection', e => console.error('[UNHANDLED]', e.reason?.message || e.reason, e.reason?.stack));
   } catch (_) {}
-  void initializeApp();
+  // Bind nav and tab interactions regardless of data load success
+  (function bindNav(){
+    const SECTIONS = ['home','tables','highlights','profiles'];
+    function navigateTo(key){
+      const k = SECTIONS.includes(key) ? key : 'home';
+      SECTIONS.forEach(s => {
+        const el = document.getElementById(s) || document.getElementById(`section-${s}`);
+        if (el) el.classList.toggle('active', s === k);
+        if (el) el.classList.toggle('hidden', s !== k);
+      });
+      document.querySelectorAll('[data-nav]').forEach(a=>{
+        a.classList.toggle('active', a.dataset.nav === k);
+      });
+      try { history.replaceState(null, '', '#'+k); } catch(_) {}
+    }
+    window.showSection = (k) => navigateTo(k);
+    document.addEventListener('click', (e)=>{
+      const a = e.target.closest('[data-nav]');
+      if (!a) return;
+      e.preventDefault();
+      navigateTo(a.dataset.nav);
+    });
+    const hash = (location.hash||'').replace('#','');
+    navigateTo(SECTIONS.includes(hash) ? hash : 'home');
+
+    // Table tabs
+    function activateTab(name){
+      const isSeason = name === 'season';
+      document.querySelectorAll('[data-tab]').forEach(a=>{
+        a.classList.toggle('active', a.dataset.tab === name);
+      });
+      const seasonEl = document.getElementById('seasonTable');
+      const gwEl = document.getElementById('gameweekTable');
+      if (seasonEl) seasonEl.classList.toggle('active', isSeason);
+      if (gwEl) gwEl.classList.toggle('active', !isSeason);
+    }
+    document.addEventListener('click', (e)=>{
+      const a = e.target.closest('[data-tab]');
+      if (!a) return;
+      e.preventDefault();
+      activateTab(a.dataset.tab);
+    });
+    activateTab('season');
+  })();
+  // Load manifest first (non-fatal), then initialize
+  loadManifest().finally(() => { void initializeApp(); });
 }
 
 if (document.readyState === 'loading') {

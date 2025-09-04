@@ -34,18 +34,14 @@
             <img src="images/pltrophy.png" alt="PL Trophy" class="pl-icon" />
           </div>
           <div class="nav-menu">
-            <button class="nav-btn active" onclick="showSection('home')">
-              Startsida
-            </button>
-            <button class="nav-btn" onclick="showSection('tables')">
-              Tabeller
-            </button>
-            <button class="nav-btn" onclick="showSection('highlights')">
-              Veckans höjdpunkter
-            </button>
-            <button class="nav-btn" onclick="showSection('profiles')">
-              Deltagare
-            </button>
+            <a href="#home" data-nav="home" class="nav-btn active">Startsida</a>
+            <a href="#tables" data-nav="tables" class="nav-btn">Tabeller</a>
+            <a href="#highlights" data-nav="highlights" class="nav-btn"
+              >Veckans höjdpunkter</a
+            >
+            <a href="#profiles" data-nav="profiles" class="nav-btn"
+              >Deltagare</a
+            >
           </div>
         </div>
       </nav>
@@ -145,14 +141,12 @@
           <h1>Tabeller</h1>
 
           <div class="table-tabs">
-            <button class="tab-btn active" onclick="showTable('season')">
-              <i class="fas fa-trophy"></i>
-              Totalpoäng
-            </button>
-            <button class="tab-btn" onclick="showTable('gameweek')">
-              <i class="fas fa-calendar-week"></i>
-              Senaste Gameweek
-            </button>
+            <a href="#season" class="tab-btn active" data-tab="season"
+              ><i class="fas fa-trophy"></i> Totalpoäng</a
+            >
+            <a href="#gameweek" class="tab-btn" data-tab="gameweek"
+              ><i class="fas fa-calendar-week"></i> Senaste Gameweek</a
+            >
           </div>
 
           <div id="seasonTable" class="table-container active">
@@ -413,7 +407,7 @@
     </div>
 
     <!-- BEFORE your main script -->
-    <script defer src="participants.config.js?v=4p5q6r7"></script>
-    <script defer src="script.js?v=4p5q6r7"></script>
+    <script defer src="participants.config.js?v=5s6t7u8"></script>
+    <script defer src="script.js?v=5s6t7u8"></script>
   </body>
 </html>
