@@ -8,16 +8,18 @@
  * @returns {string} HTML string for injection
  */
 export function renderHighlightsHtml(data) {
-  function card(title, agg, meta) {
+  function card(title, aggOrWrap, metaFn) {
+    const agg = aggOrWrap && aggOrWrap.agg ? aggOrWrap.agg : aggOrWrap;
     if (!agg) {
       return `
-        <div class="highlights__card highlights__card--disabled" title="Data saknas" aria-disabled="true">
+        <div class="highlights__card highlights__card--disabled" title="Data saknas denna vecka" aria-disabled="true">
           <div class="highlights__title">${title}</div>
-          <div class="highlights__meta">Data saknas</div>
+          <div class="highlights__meta">Data saknas denna vecka</div>
         </div>`;
     }
     const name = agg.playerName || `ID ${agg.entryId}`;
     const team = agg.teamName || '';
+    const meta = metaFn ? metaFn(aggOrWrap) : null;
     return `
       <div class="highlights__card">
         <div class="highlights__title">${title}</div>
@@ -26,17 +28,32 @@ export function renderHighlightsHtml(data) {
       </div>`;
   }
 
-  const raketMeta = data.veckansRaket ? `+${data.veckansRaket.delta} i overall-rank • ${data.veckansRaket.agg.gwPoints}p` : null;
-  const dykMeta = data.veckansStörtdyk ? `${data.veckansStörtdyk.delta} i overall-rank • ${data.veckansStörtdyk.agg.gwPoints}p` : null;
+  const fmtDelta = (n) => {
+    if (typeof n !== 'number' || !Number.isFinite(n)) return null;
+    const sign = n > 0 ? '+' : '';
+    return `${sign}${n}`;
+  };
+
+  const raketMetaFn = (wrap) => {
+    if (!wrap || typeof wrap.delta !== 'number') return null;
+    const s = fmtDelta(wrap.delta);
+    return s ? `${s} i overall-rank • ${wrap.agg.gwPoints} p` : `${wrap.agg.gwPoints} p`;
+  };
+
+  const dykMetaFn = (wrap) => {
+    if (!wrap || typeof wrap.delta !== 'number') return null;
+    const s = fmtDelta(wrap.delta);
+    return s ? `${s} i overall-rank • ${wrap.agg.gwPoints} p` : `${wrap.agg.gwPoints} p`;
+  };
 
   return `
     <section class="highlights" aria-label="Veckans höjdpunkter">
-      ${card('Veckans Kanon', data.veckansKanon, data.veckansKanon ? `${data.veckansKanon.gwPoints} poäng` : null)}
-      ${card('Veckans Sopa', data.veckansSopa, data.veckansSopa ? `${data.veckansSopa.gwPoints} poäng` : null)}
-      ${card('Veckans Raket', data.veckansRaket && data.veckansRaket.agg || null, raketMeta)}
-      ${card('Veckans Störtdyk', data.veckansStörtdyk && data.veckansStörtdyk.agg || null, dykMeta)}
-      ${card('Flest Bänkpoäng', null, null)}
-      ${card('Sämsta Kapten', null, null)}
+      ${card('Veckans kanon', data.veckansKanon, (a)=> `${a.gwPoints} poäng`)}
+      ${card('Veckans raket', data.veckansRaket, raketMetaFn)}
+      ${card('Veckans störtdyk', data.veckansStörtdyk, dykMetaFn)}
+      ${card('Veckans sopa', data.veckansSopa, (a)=> `${a.gwPoints} poäng`)}
+      ${card('Flest bänkpoäng', null, null)}
+      ${card('Sämsta kapten', null, null)}
     </section>
   `;
 }

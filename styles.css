@@ -2085,3 +2085,29 @@ h3 {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--accent-cyan);
 } 
+
+/* Highlights (minimal BEM) */
+.highlights {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+}
+.highlights__card {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border, rgba(255,255,255,0.1));
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+}
+.highlights__card--disabled {
+    opacity: 0.6;
+    filter: grayscale(0.3);
+}
+.highlights__title {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+.highlights__meta {
+    font-size: 0.95rem;
+    color: var(--text-secondary, #cfd3dc);
+}
