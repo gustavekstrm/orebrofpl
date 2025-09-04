@@ -37,8 +37,15 @@ export async function fetchWeeklyAggregates(gw, entryIds, context = {}) {
   /** @type {WeeklyAggregate[]} */
   const result = [];
 
-  // Get base aggregates from in-memory rows computed by the tables flow
-  const rows = Array.isArray(window.__lastRows) ? window.__lastRows : [];
+  // Get base aggregates from the same pipeline as tables (no new endpoints)
+  let rows = [];
+  if (typeof window.getAggregateRows === 'function') {
+    rows = await window.getAggregateRows();
+  } else if (Array.isArray(window.__aggregateBaseRows)) {
+    rows = window.__aggregateBaseRows;
+  } else if (Array.isArray(window.__lastRows)) {
+    rows = window.__lastRows; // legacy fallback
+  }
   const idSet = new Set((entryIds || []).map(n => Number(n)));
   const base = rows.filter(r => r && idSet.has(Number(r.entryId)));
 

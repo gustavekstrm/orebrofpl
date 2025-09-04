@@ -719,6 +719,9 @@ async function loadTablesViewUsingAggregates() {
     const seasonRows = buildSeasonRows(rows);
     const gwRows = buildLatestGwRows(rows);
 
+    // Expose base aggregates for other features (e.g., highlights) to reuse
+    window.__aggregateBaseRows = rows;
+
     // Debug-only assertions for season ranking and positions
     if (__DEBUG_MODE) {
       if (seasonRows.length > 0) {
@@ -1017,6 +1020,19 @@ window.dataUrl = dataUrl;
 window.fplFetch = fplFetch;
 window.populateSeasonTable = populateSeasonTable;
 window.populateGameweekTable = populateGameweekTable;
+// Provide an aggregate accessor so other features can reuse the same data pipeline (no duplicate fetches)
+window.getAggregateRows = async function() {
+  try {
+    if (Array.isArray(window.__aggregateBaseRows) && window.__aggregateBaseRows.length > 0) {
+      return window.__aggregateBaseRows;
+    }
+    // Ensure tables pipeline runs to populate aggregates
+    await loadTablesViewUsingAggregates();
+    return Array.isArray(window.__aggregateBaseRows) ? window.__aggregateBaseRows : [];
+  } catch (_) {
+    return Array.isArray(window.__aggregateBaseRows) ? window.__aggregateBaseRows : [];
+  }
+};
 // Expose highlights renderer if modules are not used
 window.__renderHighlights__ = async function(opts){
   try {
