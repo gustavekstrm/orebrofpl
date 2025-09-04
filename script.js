@@ -1,5 +1,5 @@
 // Build information
-const BUILD_SHA = '2k3l4m5'; // Current commit SHA for asset versioning
+const BUILD_SHA = '3n4o5p6'; // Current commit SHA for asset versioning
 const BUILD_BANNER = `[ÖrebroFPL] build ${BUILD_SHA} – tables=aggregate-only`;
 
 // ---- BASE + version ----
@@ -883,7 +883,6 @@ function populateSeasonTable(rows, bootstrap) {
     tr.innerHTML = `
       <td>${row.pos}</td>
       <td>${row.displayName}</td>
-      <td>${row.teamName}</td>
       <td>${row.totalPoints}</td>
       <td>${row.latestGw}</td>
     `;
@@ -913,7 +912,6 @@ function populateGameweekTable(rows, bootstrap, latestGw) {
     tr.innerHTML = `
       <td>${row.pos}</td>
       <td>${row.displayName}</td>
-      <td>${row.teamName}</td>
       <td>${row.latestGwPoints}</td>
       <td>${row.latestGw}</td>
     `;
@@ -921,7 +919,7 @@ function populateGameweekTable(rows, bootstrap, latestGw) {
   });
   
   // Update GW header
-  const gwTitle = document.getElementById('latestGwTitle') || document.querySelector('.gw-title');
+  const gwTitle = document.getElementById('latestGwTitle') || document.getElementById('currentGameweekLabel') || document.querySelector('.gw-title');
   if (gwTitle) {
     gwTitle.textContent = `Gameweek ${latestGw}`;
   }

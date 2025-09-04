@@ -7,6 +7,7 @@ En modern, responsiv webbplats för en privat Fantasy Premier League-liga med sv
 ### ✅ Implementerade funktioner
 
 <!-- Password protection removed in public release -->
+
 - **Responsive Design** - Fullt mobilanpassad med CSS Grid/Flexbox
 - **Modern UI** - FPL-inspirerad design med mörkblå, lila och cyan toner
 - **Svenskt innehåll** - All text på svenska för användarna
