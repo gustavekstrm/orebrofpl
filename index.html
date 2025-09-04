@@ -23,46 +23,10 @@
     <script src="vendor/chart.umd.min.js?v=1"></script>
   </head>
   <body>
-    <!-- Login Screen -->
-    <div id="loginScreen" class="login-screen">
-      <div class="login-container">
-        <div class="login-header">
-          <img src="images/narkelogo.png" alt="Närke" class="narke-logo" />
-          <h1>Fantasy Premier League</h1>
-          <p>Privat Liga</p>
-        </div>
-        <div class="login-form">
-          <div class="swish-instructions">
-            <div class="swish-card">
-              <h3>🎟️ Anmälningsavgift: 200 kr</h3>
-              <div class="swish-details">
-                <p><strong>Swisha till:</strong> 070-862 40 47</p>
-                <p><strong>Meddelande:</strong> "FPL 2025"</p>
-              </div>
-              <div class="screenshot-instructions">
-                <p><strong>Skicka sedan en screenshot till:</strong></p>
-                <p class="snapchat-handle">👻 gustavekstrm (Snapchat)</p>
-              </div>
-              <p class="password-note">
-                <strong>🔑</strong> Du får lösenordet efter att betalningen
-                bekräftats.
-              </p>
-            </div>
-          </div>
-          <input
-            type="password"
-            id="passwordInput"
-            placeholder="Ange lösenord"
-            autocomplete="off"
-          />
-          <button onclick="checkPassword()">Logga in</button>
-          <p class="login-info">Lycka till i år!</p>
-        </div>
-      </div>
-    </div>
+    
 
     <!-- Main Content -->
-    <div id="mainContent" class="main-content hidden">
+    <div id="mainContent" class="main-content">
       <!-- Navigation Bar -->
       <nav class="navbar">
         <div class="nav-container">
@@ -453,70 +417,7 @@
     </div>
 
     <!-- BEFORE your main script -->
-    <script defer src="participants.config.js?v=1k2l3m4"></script>
-    <script defer src="script.js?v=1k2l3m4"></script>
-    <script>
-      // Simple check to see if script.js loaded properly
-      console.log("HTML loaded, checking script.js...");
-
-      // Add a simple admin function that works regardless of script.js loading
-      window.adminLogin = function () {
-        console.log("Admin login requested");
-        const password = prompt("Ange adminlösenord:");
-        if (password === "Pepsie10") {
-          console.log("Admin login successful");
-          // Try to show admin panel
-          const adminModal = document.getElementById("adminModal");
-          if (adminModal) {
-            adminModal.classList.add("show");
-            console.log("Admin panel should now be visible");
-
-            // Try to populate admin list if the function exists
-            if (typeof window.populateAdminParticipantsList === "function") {
-              window.populateAdminParticipantsList();
-            }
-          } else {
-            console.error("Admin modal not found");
-            alert("Admin panel not found. Please refresh the page.");
-          }
-        } else if (password !== null) {
-          console.log("Admin login failed");
-          alert("Felaktigt lösenord!");
-        }
-      };
-
-      // Add keyboard shortcut for admin access (Shift + A)
-      document.addEventListener("keydown", function (e) {
-        console.log("Key pressed:", e.key, "Shift:", e.shiftKey);
-        if (e.shiftKey && e.key === "A") {
-          console.log("Admin shortcut detected!");
-          e.preventDefault();
-          window.adminLogin();
-        }
-      });
-
-      // Check if script.js loaded properly
-      setTimeout(function () {
-        console.log("Checking script.js functions...");
-        console.log(
-          "showAdminPasswordPrompt available:",
-          typeof window.showAdminPasswordPrompt
-        );
-        console.log(
-          "populateAdminParticipantsList available:",
-          typeof window.populateAdminParticipantsList
-        );
-
-        if (typeof window.showAdminPasswordPrompt === "function") {
-          console.log("Script.js loaded successfully!");
-          // Replace the simple admin function with the full one
-          window.adminLogin = window.showAdminPasswordPrompt;
-        } else {
-          console.warn(
-            "Script.js functions not available, using fallback admin function"
-          );
-        }
-      }, 2000);
-    </script>
+    <script defer src="participants.config.js?v=2k3l4m5"></script>
+    <script defer src="script.js?v=2k3l4m5"></script>
   </body>
 </html>

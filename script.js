@@ -1,5 +1,5 @@
 // Build information
-const BUILD_SHA = '1k2l3m4'; // Current commit SHA for asset versioning
+const BUILD_SHA = '2k3l4m5'; // Current commit SHA for asset versioning
 const BUILD_BANNER = `[ÖrebroFPL] build ${BUILD_SHA} – tables=aggregate-only`;
 
 // ---- BASE + version ----

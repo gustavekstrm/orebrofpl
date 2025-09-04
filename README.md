@@ -6,7 +6,7 @@ En modern, responsiv webbplats för en privat Fantasy Premier League-liga med sv
 
 ### ✅ Implementerade funktioner
 
-- **Password Protection** - Enkel lösenordsskydd för webbplatsen
+<!-- Password protection removed in public release -->
 - **Responsive Design** - Fullt mobilanpassad med CSS Grid/Flexbox
 - **Modern UI** - FPL-inspirerad design med mörkblå, lila och cyan toner
 - **Svenskt innehåll** - All text på svenska för användarna
@@ -45,18 +45,11 @@ En modern, responsiv webbplats för en privat Fantasy Premier League-liga med sv
    npx serve .
    ```
 
-3. **Logga in**
-   - Standard lösenord: `fpl2024`
-   - Ändra lösenordet i `script.js` rad 2
+<!-- Login step removed -->
 
 ## ⚙️ Konfiguration
 
-### Ändra lösenord
-
-```javascript
-// I script.js, rad 2
-const CORRECT_PASSWORD = "ditt-nya-lösenord";
-```
+<!-- Password configuration removed -->
 
 ### Uppdatera ligadata
 
@@ -97,7 +90,7 @@ Webbplatsen är fullt responsiv och fungerar på:
 
 ### För spelare
 
-1. **Logga in** med lösenordet du fick
+1. **Öppna startsidan** direkt (ingen inloggning krävs)
 2. **Bläddra mellan sektioner** med navigationen
 3. **Visa tabeller** och ranking över tid
 4. **Kolla profiler** för alla deltagare
@@ -118,7 +111,6 @@ Webbplatsen är fullt responsiv och fungerar på:
 
 ### Lokal lagring
 
-- Användar-inloggning sparas i `localStorage`
 - Liga-data sparas i `localStorage` för persistent data
 
 ## 🎨 Anpassning
