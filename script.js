@@ -1116,6 +1116,9 @@ function safeInit() {
 
     // Hard-init: ensure highlights init even if above path misses
     (function ensureHighlightsInit(){
+      // Import proxy health check
+      let _proxyHealthy = null;
+      import('./src/highlights/health.js').then(mod => { _proxyHealthy = mod.proxyHealthy; }).catch(()=>{});
       const onReady = (fn) => {
         if (document.readyState === 'complete' || document.readyState === 'interactive') return fn();
         document.addEventListener('DOMContentLoaded', fn, { once: true });
@@ -1135,6 +1138,19 @@ function safeInit() {
         const ok = await waitFor(() => typeof window.getAggregateRows === 'function');
         console.debug('[highlights][boot] hasGetAggregateRows:', ok);
         if (!ok) console.warn('[highlights] getAggregateRows not ready');
+        // Gate on proxy health; show muted banner if unhealthy
+        try {
+          if (typeof _proxyHealthy === 'function') {
+            const healthy = await _proxyHealthy();
+            if (!healthy) {
+              console.warn('[highlights] proxy not healthy; showing muted banner');
+              const banner = document.querySelector('#weekly-highlights, #highlights') || document.body;
+              if (banner) banner.insertAdjacentHTML('beforeend', '<div class="muted-banner">Kunde inte hämta veckans höjdpunkter just nu.</div>');
+              return; // Skip highlights init; tables unaffected
+            }
+            console.debug('[highlights] proxy healthy, booting…');
+          }
+        } catch(_) {}
         const call = async () => {
           try {
             console.debug('[highlights][boot] calling renderHighlights');

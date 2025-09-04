@@ -408,6 +408,12 @@
       </div>
     </div>
 
+    <!-- Define proxy base before any bundles so highlights sees it -->
+    <script>
+      // Set this to your deployed proxy origin (no trailing slash)
+      window.PROXY_BASE = window.PROXY_BASE || 'https://<YOUR_PROXY_HOST>';
+    </script>
+
     <!-- BEFORE your main script -->
     <script defer src="participants.config.js?v=5s6t7u8"></script>
     <script defer src="script.js?v=5s6t7u8"></script>
