@@ -1020,19 +1020,7 @@ window.dataUrl = dataUrl;
 window.fplFetch = fplFetch;
 window.populateSeasonTable = populateSeasonTable;
 window.populateGameweekTable = populateGameweekTable;
-// Provide an aggregate accessor so other features can reuse the same data pipeline (no duplicate fetches)
-window.getAggregateRows = async function() {
-  try {
-    if (Array.isArray(window.__aggregateBaseRows) && window.__aggregateBaseRows.length > 0) {
-      return window.__aggregateBaseRows;
-    }
-    // Ensure tables pipeline runs to populate aggregates
-    await loadTablesViewUsingAggregates();
-    return Array.isArray(window.__aggregateBaseRows) ? window.__aggregateBaseRows : [];
-  } catch (_) {
-    return Array.isArray(window.__aggregateBaseRows) ? window.__aggregateBaseRows : [];
-  }
-};
+// Note: Do NOT override window.getAggregateRows here; highlights sets its own proxy-backed getter.
 // Alias to render/mount highlights for external callers
 window.renderHighlights = async function(opts){
   try {
@@ -1105,18 +1093,7 @@ function safeInit() {
     // Attempt to mount highlights when tables/aggregates are ready
     (async function tryMountHighlights(){
       const start = performance.now();
-      // Poll briefly for getAggregateRows
-      const waitFor = async (pred, timeout=2000) => {
-        const t0 = performance.now();
-        while (performance.now() - t0 < timeout) {
-          if (pred()) return true;
-          await new Promise(r => setTimeout(r, 100));
-        }
-        return false;
-      };
       try {
-        const ok = await waitFor(() => typeof window.getAggregateRows === 'function');
-        if (!ok) return;
         const latestGw = await getLatestGwOnce();
         if (typeof window.__renderHighlights__ === 'function') {
           await window.__renderHighlights__({
@@ -1152,11 +1129,15 @@ function safeInit() {
         return false;
       };
       onReady(async () => {
+        console.debug('[highlights][boot] ready');
+        // Preload highlights module to ensure proxy-backed getAggregateRows is defined
+        try { await import('./src/highlights/index.js'); } catch(_) {}
         const ok = await waitFor(() => typeof window.getAggregateRows === 'function');
-        console.debug('[highlights][bootstrap] hasGetAggregateRows:', ok);
-        if (!ok) return console.warn('[highlights] getAggregateRows not ready');
+        console.debug('[highlights][boot] hasGetAggregateRows:', ok);
+        if (!ok) console.warn('[highlights] getAggregateRows not ready');
         const call = async () => {
           try {
+            console.debug('[highlights][boot] calling renderHighlights');
             await window.renderHighlights?.({
               gw: await (window.getLatestGwOnce?.() ?? Promise.resolve(window.CURRENT_GW)),
               entryIds: window.ENTRY_IDS,

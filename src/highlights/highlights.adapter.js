@@ -37,58 +37,75 @@ export async function fetchWeeklyAggregates(gw, entryIds, context = {}) {
   /** @type {WeeklyAggregate[]} */
   const result = [];
 
-  // Get base aggregates from the same pipeline as tables (no new endpoints)
+  // Get base aggregates from a single source of truth for highlights:
+  // Prefer proxy-backed window.getAggregateRows(gw, entryIds) when available.
   let rows = [];
-  if (typeof window.getAggregateRows === 'function') {
-    rows = await window.getAggregateRows();
-  } else if (Array.isArray(window.__aggregateBaseRows)) {
-    rows = window.__aggregateBaseRows;
-  } else if (Array.isArray(window.__lastRows)) {
-    rows = window.__lastRows; // legacy fallback
+  try {
+    if (typeof window.getAggregateRows === 'function') {
+      rows = await window.getAggregateRows(gw, entryIds);
+    } else if (Array.isArray(window.__aggregateBaseRows)) {
+      rows = window.__aggregateBaseRows;
+    } else if (Array.isArray(window.__lastRows)) {
+      rows = window.__lastRows; // legacy fallback
+    }
+  } catch (_) {
+    // swallow; will fall back to any in-memory rows if present
+    rows = Array.isArray(window.__aggregateBaseRows) ? window.__aggregateBaseRows : (Array.isArray(window.__lastRows) ? window.__lastRows : []);
   }
+
   const idSet = new Set((entryIds || []).map(n => Number(n)));
-  const base = rows.filter(r => r && idSet.has(Number(r.entryId)));
+  const base = (Array.isArray(rows) ? rows : []).filter(r => r && idSet.has(Number(r.entryId || r.fplId || r.id || r.entry)));
 
-  // Helper to compute group rank map by a numeric score accessor
-  function rankMap(list, scoreKey) {
-    const sorted = [...list].sort((a, b) => {
-      const va = Number(a?.[scoreKey] || 0);
-      const vb = Number(b?.[scoreKey] || 0);
-      if (vb !== va) return vb - va; // desc
-      // tie-break by other score and then entryId
-      const altA = Number(a?.latestGwPoints || 0);
-      const altB = Number(b?.latestGwPoints || 0);
-      if (altB !== altA) return altB - altA;
-      return Number(b?.entryId || 0) - Number(a?.entryId || 0);
-    });
-    const map = new Map();
-    sorted.forEach((r, i) => map.set(Number(r.entryId), i + 1));
-    return map;
+  // Normalize row fields to WeeklyAggregate-compatible shape
+  const normalized = base.map(r => {
+    const entryId = Number(r.entryId || r.fplId || r.entry || r.id || 0);
+    const playerName = String(r.playerName || r.displayName || r.entry_name || r.name || '');
+    const teamName = String(r.teamName || r.team_name || '');
+    const gwPoints = Number(r.gwPoints ?? r.latestGwPoints ?? r.points ?? 0);
+    const totalPoints = Number(r.totalPoints ?? r.total_points ?? 0);
+    const overallRank = Number.isFinite(r?.overallRank) ? Number(r.overallRank) : null;
+    const prevOverallRank = Number.isFinite(r?.prevOverallRank) ? Number(r.prevOverallRank) : null;
+    return { entryId, playerName, teamName, gwPoints, totalPoints, overallRank, prevOverallRank };
+  });
+
+  // If ranks are not provided, compute them from totals and previous totals
+  const needRanks = normalized.some(x => !Number.isFinite(x.overallRank) || !Number.isFinite(x.prevOverallRank));
+  if (needRanks) {
+    // Helper to compute group rank map by a numeric accessor
+    function rankMap(list, scoreKey) {
+      const sorted = [...list].sort((a, b) => {
+        const va = Number(a?.[scoreKey] || 0);
+        const vb = Number(b?.[scoreKey] || 0);
+        if (vb !== va) return vb - va; // desc
+        // tie-break by other score and then entryId
+        const altA = Number(a?.gwPoints || 0);
+        const altB = Number(b?.gwPoints || 0);
+        if (altB !== altA) return altB - altA;
+        return Number(b?.entryId || 0) - Number(a?.entryId || 0);
+      });
+      const map = new Map();
+      sorted.forEach((r, i) => map.set(Number(r.entryId), i + 1));
+      return map;
+    }
+
+    const currentRanks = rankMap(normalized, 'totalPoints');
+    const withPrevTotals = normalized.map(r => ({ ...r, __prevTotal: Number(r.totalPoints || 0) - Number(r.gwPoints || 0) }));
+    const prevRanks = rankMap(withPrevTotals, '__prevTotal');
+
+    for (const r of normalized) {
+      if (!Number.isFinite(r.overallRank)) r.overallRank = currentRanks.get(r.entryId) ?? null;
+      if (!Number.isFinite(r.prevOverallRank)) r.prevOverallRank = prevRanks.get(r.entryId) ?? null;
+    }
   }
 
-  // Compute current group ranks by totalPoints
-  const currentRanks = rankMap(base, 'totalPoints');
-  // Compute previous totals cheaply and rank for prevOverallRank
-  const withPrevTotals = base.map(r => ({ ...r, __prevTotal: Number(r.totalPoints || 0) - Number(r.latestGwPoints || 0) }));
-  const prevRanks = rankMap(withPrevTotals, '__prevTotal');
-
+  // Ensure we include all requested ids (preserve ordering by entryIds)
   for (const id of idSet) {
-    const row = base.find(r => Number(r.entryId) === Number(id));
+    const row = normalized.find(x => Number(x.entryId) === Number(id));
     if (!row) {
       result.push({ entryId: Number(id), playerName: '', teamName: '', gwPoints: 0, totalPoints: 0, overallRank: null, prevOverallRank: null });
-      continue;
+    } else {
+      result.push(row);
     }
-    const overallRank = currentRanks.get(Number(id)) ?? null;
-    const prevOverallRank = prevRanks.get(Number(id)) ?? null;
-    result.push({
-      entryId: Number(id),
-      playerName: String(row.displayName || ''),
-      teamName: String(row.teamName || ''),
-      gwPoints: Number(row.latestGwPoints || 0),
-      totalPoints: Number(row.totalPoints || 0),
-      overallRank: overallRank,
-      prevOverallRank: prevOverallRank
-    });
   }
 
   return result;

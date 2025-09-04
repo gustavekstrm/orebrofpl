@@ -1,6 +1,7 @@
 /**
  * Orchestrator for highlights: fetch → compute → render → inject
  */
+import './highlights.fetch.js';
 import { fetchWeeklyAggregates } from './highlights.adapter.js';
 import { computeWeeklyHighlights, pickBottomN, computeBeerLevels, pickWallSets } from './highlights.logic.js';
 import { renderHighlightsHtml } from './highlights.view.js';
@@ -84,5 +85,5 @@ export async function mountHighlights(opts) {
   }
 }
 
-export default { renderHighlights };
+export default { mountHighlights };
 
