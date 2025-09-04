@@ -309,6 +309,30 @@ async function mapWithConcurrency(items, worker, limit = 6) {
   return results;
 }
 
+// Ranking helpers: never mutate base rows
+function rankBy(rows, primaryKey, tieBreakKeys = []) {
+  const sorted = [...rows].sort((a, b) => {
+    const pa = Number(a?.[primaryKey] ?? 0);
+    const pb = Number(b?.[primaryKey] ?? 0);
+    if (pb !== pa) return pb - pa;
+    for (const k of tieBreakKeys) {
+      const va = Number(a?.[k] ?? 0);
+      const vb = Number(b?.[k] ?? 0);
+      if (vb !== va) return vb - va;
+    }
+    return String(a?.displayName || '').localeCompare(String(b?.displayName || ''));
+  });
+  return sorted.map((r, idx) => ({ ...r, pos: idx + 1 }));
+}
+
+function buildSeasonRows(baseRows) {
+  return rankBy(baseRows, 'totalPoints', ['latestGwPoints', 'entryId']);
+}
+
+function buildLatestGwRows(baseRows) {
+  return rankBy(baseRows, 'latestGwPoints', ['totalPoints', 'entryId']);
+}
+
 // Retry mechanism for resilient API calls
 async function fetchWithRetry(url, opts = {}, tries = 3) {
   let attempt = 0, lastErr;
@@ -689,24 +713,10 @@ async function loadTablesViewUsingAggregates() {
     const rows = await mapWithConcurrency(validParticipants, worker, 6);
     console.info('[Tables] Processed', rows.length, 'participants with concurrency');
     
-    // Compute positions and sort rows
-    const sortedSeasonRows = [...rows].sort((a, b) => b.totalPoints - a.totalPoints);
-    const sortedGwRows = [...rows].sort((a, b) => {
-      // Sort by latest GW points, then by total points for ties
-      if (b.latestGwPoints !== a.latestGwPoints) {
-        return b.latestGwPoints - a.latestGwPoints;
-      }
-      return b.totalPoints - a.totalPoints;
-    });
-    
-    // Add position numbers
-    sortedSeasonRows.forEach((row, index) => {
-      row.pos = index + 1;
-    });
-    sortedGwRows.forEach((row, index) => {
-      row.pos = index + 1;
-    });
-    
+    // Build ranked rows (no mutation of base)
+    const sortedSeasonRows = buildSeasonRows(rows);
+    const sortedGwRows = buildLatestGwRows(rows);
+
     // Store for debug utilities and health checks
     window.__lastRows = sortedSeasonRows; // Use season-sorted rows as primary
     
@@ -767,6 +777,7 @@ async function loadTablesViewUsingAggregates() {
       };
       
       console.table('👀 DEBUG: Sample Row', [window.__DEBUG_FPL.sampleRow]);
+      console.table('👀 DEBUG: Season Top 5', buildSeasonRows(rows).slice(0,5).map(r => ({ pos: r.pos, name: r.displayName, total: r.totalPoints, gwPts: r.latestGwPoints })));
       console.table('👀 DEBUG: First 5 Computed Rows', window.__DEBUG_FPL.computedRows);
       console.log('👀 DEBUG: Season & GW Info', { season, latestGw, requestedGw: gw });
       
