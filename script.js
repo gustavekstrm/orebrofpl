@@ -717,6 +717,18 @@ async function loadTablesViewUsingAggregates() {
     const sortedSeasonRows = buildSeasonRows(rows);
     const sortedGwRows = buildLatestGwRows(rows);
 
+    // Debug-only assertions for season ranking and positions
+    if (__DEBUG_MODE) {
+      const sRows = buildSeasonRows(rows);
+      if (sRows.length > 0) {
+        console.assert(sRows[0].pos === 1, 'Season pos[0] must be 1', sRows[0]);
+      }
+      for (let i = 1; i < sRows.length; i++) {
+        console.assert(sRows[i].pos === i + 1, 'Season pos mismatch at i=' + i, sRows[i]);
+        console.assert(Number(sRows[i-1].totalPoints||0) >= Number(sRows[i].totalPoints||0), 'Season sort order broken', sRows[i-1], sRows[i]);
+      }
+    }
+
     // Store for debug utilities and health checks
     window.__lastRows = sortedSeasonRows; // Use season-sorted rows as primary
     
@@ -943,16 +955,18 @@ function populateSeasonTable(rows, bootstrap) {
   
   tbody.innerHTML = '';
   
-  rows.forEach(row => {
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const pos = i + 1; // derive from index to avoid stale/global pos
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${row.pos}</td>
-      <td>${row.displayName}</td>
-      <td>${row.totalPoints}</td>
-      <td>${row.latestGw}</td>
+      <td>${pos}</td>
+      <td>${r.displayName}</td>
+      <td>${r.totalPoints}</td>
+      <td>${r.latestGw}</td>
     `;
     tbody.appendChild(tr);
-  });
+  }
   
   // Update season header using derived label if available
   const seasonTitle = document.getElementById('seasonTitle') || document.querySelector('.season-title') || (function(){ const el = document.createElement('div'); el.id = 'seasonTitle'; const header = document.querySelector('#seasonTable .table-header'); if (header) header.appendChild(el); return el; })();
