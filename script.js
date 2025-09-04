@@ -1,5 +1,5 @@
 // Build information
-const BUILD_SHA = '3n4o5p6'; // Current commit SHA for asset versioning
+const BUILD_SHA = '4p5q6r7'; // Current commit SHA for asset versioning
 const BUILD_BANNER = `[ÖrebroFPL] build ${BUILD_SHA} – tables=aggregate-only`;
 
 // ---- BASE + version ----
@@ -866,17 +866,28 @@ async function runHealthChecks() {
 async function initializeApp() {
   try {
     console.info('[App] Initializing FPL ÖREBRO application...');
-    
-    // Run health checks first
-    await runHealthChecks();
-    
-    // Load tables with aggregates
-    await loadTablesViewUsingAggregates();
-    
+    // Render first, then health checks
+    let step = 'render';
+    try {
+      await loadTablesViewUsingAggregates();
+      console.info('[App] Rendered tables and headings');
+    } catch (e) {
+      console.error('[INIT_FATAL]', { step, errName: e.name, errMsg: e.message, stack: e.stack });
+      showStatus('error', 'Application initialization failed', { details: e.message });
+    }
+
+    step = 'health_checks';
+    try {
+      await runHealthChecks();
+      console.info('[App] Health checks completed');
+    } catch (e) {
+      console.error('[INIT_WARN]', { step, errName: e.name, errMsg: e.message, stack: e.stack });
+      // Do not block the app; banner already shown by runHealthChecks
+    }
+
     console.info('[App] Application initialized successfully');
-    
   } catch (error) {
-    console.error('[App] Failed to initialize application:', error);
+    console.error('[INIT_FATAL]', { step: 'top-level', errName: error.name, errMsg: error.message, stack: error.stack });
     showStatus('error', 'Application initialization failed', { details: error.message });
   }
 }
@@ -885,7 +896,7 @@ async function initializeApp() {
 function populateSeasonTable(rows, bootstrap) {
   console.info('[Season Table] Rendering', rows.length, 'rows');
   
-  const tbody = document.getElementById('seasonTableBody');
+  const tbody = document.getElementById('seasonTableBody') || (function(){ const el = document.createElement('tbody'); el.id = 'seasonTableBody'; const table = document.querySelector('#seasonTable table'); if (table) table.appendChild(el); return el; })();
   if (!tbody) {
     console.warn('[Season Table] Table body not found');
     return;
@@ -905,7 +916,7 @@ function populateSeasonTable(rows, bootstrap) {
   });
   
   // Update season header using derived label if available
-  const seasonTitle = document.getElementById('seasonTitle') || document.querySelector('.season-title');
+  const seasonTitle = document.getElementById('seasonTitle') || document.querySelector('.season-title') || (function(){ const el = document.createElement('div'); el.id = 'seasonTitle'; const header = document.querySelector('#seasonTable .table-header'); if (header) header.appendChild(el); return el; })();
   if (seasonTitle && bootstrap) {
     const label = deriveSeasonLabel(bootstrap);
     seasonTitle.textContent = label ? `Säsong ${label}` : '';
@@ -915,7 +926,7 @@ function populateSeasonTable(rows, bootstrap) {
 function populateGameweekTable(rows, bootstrap, latestGw) {
   console.info('[GW Table] Rendering', rows.length, 'rows for GW', latestGw);
   
-  const tbody = document.getElementById('gameweekTableBody');
+  const tbody = document.getElementById('gameweekTableBody') || (function(){ const el = document.createElement('tbody'); el.id = 'gameweekTableBody'; const table = document.querySelector('#gameweekTable table'); if (table) table.appendChild(el); return el; })();
   if (!tbody) {
     console.warn('[GW Table] Table body not found');
     return;
@@ -935,7 +946,7 @@ function populateGameweekTable(rows, bootstrap, latestGw) {
   });
   
   // Update GW header
-  const gwTitle = document.getElementById('latestGwTitle') || document.getElementById('currentGameweekLabel') || document.querySelector('.gw-title');
+  const gwTitle = document.getElementById('latestGwTitle') || document.getElementById('currentGameweekLabel') || document.querySelector('.gw-title') || (function(){ const el = document.createElement('div'); el.id = 'latestGwTitle'; const header = document.querySelector('#gameweekTable .table-header'); if (header) header.appendChild(el); return el; })();
   if (gwTitle) {
     gwTitle.textContent = `Gameweek ${latestGw}`;
   }
@@ -952,8 +963,16 @@ window.populateSeasonTable = populateSeasonTable;
 window.populateGameweekTable = populateGameweekTable;
 
 // Auto-initialize when DOM is ready
+function safeInit() {
+  try {
+    window.addEventListener('error',  e => console.error('[ONERROR]', e.message, e.filename, e.lineno, e.colno, e.error?.stack));
+    window.addEventListener('unhandledrejection', e => console.error('[UNHANDLED]', e.reason?.message || e.reason, e.reason?.stack));
+  } catch (_) {}
+  void initializeApp();
+}
+
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initializeApp);
+  document.addEventListener('DOMContentLoaded', safeInit);
 } else {
-  initializeApp();
+  safeInit();
 }
