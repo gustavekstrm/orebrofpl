@@ -14,7 +14,8 @@ function getBaseFromTag() {
 
 // 2) Else derive from current script URL (works on GH Pages project sites)
 function getBaseFromScript() {
-  const src = (document.currentScript && document.currentScript.src) || (typeof import !== 'undefined' ? import.meta.url : null);
+  const current = document.currentScript;
+  const src = current && current.src ? current.src : null;
   if (!src) return null;
   const u = new URL(src, location.href);
   // strip filename → /<repo>/
@@ -31,7 +32,7 @@ function getBaseFromLocation() {
 const BASE = getBaseFromTag() || getBaseFromScript() || getBaseFromLocation();
 
 // Debug BASE resolution in development
-if (typeof window !== 'undefined' && new URLSearchParams(location.search).get('debug') === 'true') {
+if (typeof window !== 'undefined' && typeof location !== 'undefined' && new URLSearchParams(location.search).get('debug') === 'true') {
   console.log('[BASE] Resolution debug:', {
     tag: getBaseFromTag(),
     script: getBaseFromScript(),
@@ -45,7 +46,7 @@ if (typeof window !== 'undefined' && new URLSearchParams(location.search).get('d
 function dataUrl(relativePath) {
   // relativePath like 'data/bootstrap-static.json' OR `data/entry/${id}/history.json`
   const url = new URL(`${relativePath}?v=${BUILD_SHA}`, BASE).toString();
-  if (typeof window !== 'undefined' && new URLSearchParams(location.search).get('debug') === 'true') {
+  if (typeof window !== 'undefined' && typeof location !== 'undefined' && new URLSearchParams(location.search).get('debug') === 'true') {
     console.log(`[dataUrl] ${relativePath} -> ${url}`);
   }
   return url;
@@ -444,9 +445,11 @@ function showStatus(type, message, options = {}) {
 }
 
 // Debug mode detection (URL-based toggle)
-const urlParams = new URLSearchParams(window.location.search);
+const urlParams = typeof window !== 'undefined' && typeof window.location !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams('');
 const __DEBUG_MODE = urlParams.get('debug') === 'true';
-window.__DEBUG_MODE = __DEBUG_MODE;
+if (typeof window !== 'undefined') {
+  window.__DEBUG_MODE = __DEBUG_MODE;
+}
 
 // Configuration
 console.log('=== SCRIPT.JS LOADING ===');
@@ -516,7 +519,7 @@ async function _debugProbe() {
 }
 
 // Execute debug probe if debug mode enabled
-if (typeof window !== 'undefined' && new URLSearchParams(location.search).get('debug') === 'true') {
+if (typeof window !== 'undefined' && typeof location !== 'undefined' && new URLSearchParams(location.search).get('debug') === 'true') {
   _debugProbe().then(result => {
     console.log('[PROBE] Result:', result);
     window.__PROBE_RESULT = result;
@@ -524,7 +527,7 @@ if (typeof window !== 'undefined' && new URLSearchParams(location.search).get('d
 }
 
 // Debug GW probe for troubleshooting (debug mode only)
-if (typeof window !== 'undefined' && new URLSearchParams(location.search).get('debug') === 'true') {
+if (typeof window !== 'undefined' && typeof location !== 'undefined' && new URLSearchParams(location.search).get('debug') === 'true') {
   window.__DEBUG_FPL = window.__DEBUG_FPL || {};
   window.__DEBUG_FPL.gwProbe = async () => {
     try {
