@@ -172,6 +172,21 @@ function deriveLatestFinishedGw(boot) {
   throw new Error('No usable events in bootstrap');
 }
 
+// Derive season label (e.g., 2025/26) from bootstrap events
+function deriveSeasonLabel(boot) {
+  try {
+    const events = Array.isArray(boot?.events) ? boot.events : [];
+    if (events.length === 0) return '';
+    const first = events[0];
+    const dt = new Date(first.deadline_time);
+    const startYear = Number.isFinite(dt.getUTCFullYear()) ? dt.getUTCFullYear() : new Date().getUTCFullYear();
+    const endYearShort = String((startYear + 1) % 100).padStart(2, '0');
+    return `${startYear}/${endYearShort}`;
+  } catch (_) {
+    return '';
+  }
+}
+
 // Robust GW resolver - single source of truth for latest finished GW
 async function resolveLatestFinishedGw() {
   try {
@@ -889,10 +904,11 @@ function populateSeasonTable(rows, bootstrap) {
     tbody.appendChild(tr);
   });
   
-  // Update season header
+  // Update season header using derived label if available
   const seasonTitle = document.getElementById('seasonTitle') || document.querySelector('.season-title');
-  if (seasonTitle) {
-    seasonTitle.textContent = `Säsong 2025/26`;
+  if (seasonTitle && bootstrap) {
+    const label = deriveSeasonLabel(bootstrap);
+    seasonTitle.textContent = label ? `Säsong ${label}` : '';
   }
 }
 
