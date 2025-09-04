@@ -1,0 +1,18 @@
+name = "fpl-proxy"
+main = "fpl-proxy.js"
+compatibility_date = "2024-01-01"
+
+[env.production]
+name = "fpl-proxy"
+
+[env.staging]
+name = "fpl-proxy-staging"
+
+# Routes for the worker
+[[routes]]
+pattern = "fpl-proxy.your-domain.workers.dev/*"
+zone_name = "your-domain.com"
+
+# Environment variables (if needed)
+[vars]
+ENVIRONMENT = "production"

@@ -5,8 +5,7 @@
   "main": "script.js",
   "scripts": {
     "test": "node test-health.js",
-    "health-check": "node -e \"console.log('Health check script loaded');\"",
-    "test:hl": "node src/highlights/__tests__/highlights.logic.test.js"
+    "health-check": "node -e \"console.log('Health check script loaded');\""
   },
   "devDependencies": {
     "jsdom": "^24.0.0"

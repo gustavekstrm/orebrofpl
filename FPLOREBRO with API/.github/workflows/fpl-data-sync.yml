@@ -1,0 +1,96 @@
+name: FPL Data Sync
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Generate /data from FPL API
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const https = require('https');
+
+          function fetchJson(url){
+            return new Promise((resolve, reject)=>{
+              https.get(url, { headers: { 'User-Agent': 'OrebroFPL/1.0 (+github-actions)' }}, res=>{
+                let data=''; res.on('data', d=>data+=d);
+                res.on('end', ()=>{ try{ resolve(JSON.parse(data)); } catch(e){ reject(e); }});
+              }).on('error', reject);
+            });
+          }
+
+          // Read entry IDs from participants.config.js
+          const cfg = fs.readFileSync('participants.config.js','utf8');
+          const ids = new Set();
+
+          const m1 = cfg.match(/ENTRY_IDS\s*=\s*\[([\s\S]*?)\]/);
+          if (m1){
+            (m1[1].match(/\d+/g)||[]).forEach(n=>ids.add(Number(n)));
+          }
+          const m2 = cfg.match(/LEGACY_PARTICIPANTS\s*=\s*\[([\s\S]*?)\]/);
+          if (m2){
+            (m2[1].match(/entryId\s*:\s*(\d+)/g)||[]).forEach(s=>{
+              const n = Number((s.match(/\d+/)||[])[0]); if(n) ids.add(n);
+            });
+          }
+
+          if (!ids.size) {
+            console.error('No entry IDs found in participants.config.js');
+          }
+
+          fs.mkdirSync('data', { recursive: true });
+          fs.mkdirSync('data/entry', { recursive: true });
+
+          (async ()=>{
+            const boot = await fetchJson('https://fantasy.premierleague.com/api/bootstrap-static/');
+            fs.writeFileSync('data/bootstrap-static.json', JSON.stringify(boot));
+
+            for (const id of ids){
+              const url = `https://fantasy.premierleague.com/api/entry/${id}/history/`;
+              try{
+                const hist = await fetchJson(url);
+                const dir = path.join('data','entry', String(id));
+                fs.mkdirSync(dir, { recursive: true });
+                fs.writeFileSync(path.join(dir, 'history.json'), JSON.stringify(hist));
+              }catch(e){
+                console.error('Failed history for', id, e.message);
+              }
+            }
+
+            const sha = (process.env.GITHUB_SHA||'').slice(0,7);
+            const manifest = { lastSync: new Date().toISOString(), ids: Array.from(ids), sha };
+            fs.writeFileSync('data/manifest.json', JSON.stringify(manifest));
+          })().catch(e=>{ console.error(e); process.exit(1); });
+          NODE
+
+      - name: Commit data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          if ! git diff --cached --quiet; then
+            git commit -m "data: sync FPL bootstrap + entry histories [skip ci]"
+            git push
+          else
+            echo "No data changes."
+          fi

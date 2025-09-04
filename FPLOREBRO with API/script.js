@@ -1017,15 +1017,6 @@ window.dataUrl = dataUrl;
 window.fplFetch = fplFetch;
 window.populateSeasonTable = populateSeasonTable;
 window.populateGameweekTable = populateGameweekTable;
-// Expose highlights renderer if modules are not used
-window.__renderHighlights__ = async function(opts){
-  try {
-    const mod = await import('./src/highlights/index.js');
-    return mod.renderHighlights(opts);
-  } catch (e) {
-    console.warn('[Highlights] dynamic import failed:', e?.message);
-  }
-};
 
 // Auto-initialize when DOM is ready
 function safeInit() {
