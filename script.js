@@ -1033,6 +1033,15 @@ window.getAggregateRows = async function() {
     return Array.isArray(window.__aggregateBaseRows) ? window.__aggregateBaseRows : [];
   }
 };
+// Alias to render/mount highlights for external callers
+window.renderHighlights = async function(opts){
+  try {
+    const mod = await import('./src/highlights/index.js');
+    return mod.mountHighlights(opts);
+  } catch (e) {
+    console.warn('[highlights] dynamic import failed:', e?.message);
+  }
+};
 // Expose highlights renderer if modules are not used
 window.__renderHighlights__ = async function(opts){
   try {
@@ -1126,6 +1135,50 @@ function safeInit() {
       } catch (e) {
         console.warn('[highlights] mount failed:', e?.message || e);
       }
+    })();
+
+    // Hard-init: ensure highlights init even if above path misses
+    (function ensureHighlightsInit(){
+      const onReady = (fn) => {
+        if (document.readyState === 'complete' || document.readyState === 'interactive') return fn();
+        document.addEventListener('DOMContentLoaded', fn, { once: true });
+      };
+      const waitFor = async (pred, ms=2000) => {
+        const t0 = performance.now();
+        while (performance.now() - t0 < ms) {
+          if (pred()) return true;
+          await new Promise(r=>setTimeout(r,50));
+        }
+        return false;
+      };
+      onReady(async () => {
+        const ok = await waitFor(() => typeof window.getAggregateRows === 'function');
+        console.debug('[highlights][bootstrap] hasGetAggregateRows:', ok);
+        if (!ok) return console.warn('[highlights] getAggregateRows not ready');
+        const call = async () => {
+          try {
+            await window.renderHighlights?.({
+              gw: await (window.getLatestGwOnce?.() ?? Promise.resolve(window.CURRENT_GW)),
+              entryIds: window.ENTRY_IDS,
+              selectors: {
+                roast: '#roastGrid,[data-role="roast"]',
+                beer:  '#beerGrid,[data-role="beer"]',
+                fame:  '#fameStats,[data-role="wall-fame"]',
+                shame: '#shameStats,[data-role="wall-shame"]',
+              },
+              context: { allowPicks: false }
+            });
+            console.debug('[highlights][bootstrap] renderHighlights called');
+          } catch (e) {
+            console.warn('[highlights] render error', e);
+          }
+        };
+        await call();
+        const tab = document.querySelector('[data-tab="highlights"], #tab-highlights, a[href*="highlights"]');
+        if (tab) {
+          tab.addEventListener('click', () => setTimeout(call, 0));
+        }
+      });
     })();
   })();
   // Load manifest first (non-fatal), then initialize
