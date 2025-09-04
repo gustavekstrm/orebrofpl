@@ -320,17 +320,19 @@ function rankBy(rows, primaryKey, tieBreakKeys = []) {
       const vb = Number(b?.[k] ?? 0);
       if (vb !== va) return vb - va;
     }
-    return String(a?.displayName || '').localeCompare(String(b?.displayName || ''));
+    return Number(b?.entryId || 0) - Number(a?.entryId || 0);
   });
-  return sorted.map((r, idx) => ({ ...r, pos: idx + 1 }));
+  return sorted; // caller adds position field name
 }
 
 function buildSeasonRows(baseRows) {
-  return rankBy(baseRows, 'totalPoints', ['latestGwPoints', 'entryId']);
+  const sorted = rankBy(baseRows, 'totalPoints', ['latestGwPoints']);
+  return sorted.map((r, i) => ({ ...r, seasonPos: i + 1 }));
 }
 
 function buildLatestGwRows(baseRows) {
-  return rankBy(baseRows, 'latestGwPoints', ['totalPoints', 'entryId']);
+  const sorted = rankBy(baseRows, 'latestGwPoints', ['totalPoints']);
+  return sorted.map((r, i) => ({ ...r, gwPos: i + 1 }));
 }
 
 // Retry mechanism for resilient API calls
@@ -714,23 +716,22 @@ async function loadTablesViewUsingAggregates() {
     console.info('[Tables] Processed', rows.length, 'participants with concurrency');
     
     // Build ranked rows (no mutation of base)
-    const sortedSeasonRows = buildSeasonRows(rows);
-    const sortedGwRows = buildLatestGwRows(rows);
+    const seasonRows = buildSeasonRows(rows);
+    const gwRows = buildLatestGwRows(rows);
 
     // Debug-only assertions for season ranking and positions
     if (__DEBUG_MODE) {
-      const sRows = buildSeasonRows(rows);
-      if (sRows.length > 0) {
-        console.assert(sRows[0].pos === 1, 'Season pos[0] must be 1', sRows[0]);
+      if (seasonRows.length > 0) {
+        console.assert(seasonRows[0].seasonPos === 1, 'Season pos[0] must be 1', seasonRows[0]);
       }
-      for (let i = 1; i < sRows.length; i++) {
-        console.assert(sRows[i].pos === i + 1, 'Season pos mismatch at i=' + i, sRows[i]);
-        console.assert(Number(sRows[i-1].totalPoints||0) >= Number(sRows[i].totalPoints||0), 'Season sort order broken', sRows[i-1], sRows[i]);
+      for (let i = 1; i < seasonRows.length; i++) {
+        console.assert(seasonRows[i].seasonPos === i + 1, 'Season pos mismatch at i=' + i, seasonRows[i]);
+        console.assert(Number(seasonRows[i-1].totalPoints||0) >= Number(seasonRows[i].totalPoints||0), 'Season sort order broken', seasonRows[i-1], seasonRows[i]);
       }
     }
 
     // Store for debug utilities and health checks
-    window.__lastRows = sortedSeasonRows; // Use season-sorted rows as primary
+    window.__lastRows = seasonRows; // Use season-sorted rows as primary
     
     // Add debug dump for inspection (only if debug mode enabled)
     if (__DEBUG_MODE) {
@@ -763,7 +764,7 @@ async function loadTablesViewUsingAggregates() {
       
       window.__DEBUG_FPL = {
         participants: validParticipants,
-        sampleRow: sortedSeasonRows[0],
+        sampleRow: seasonRows[0],
         season: season,
         gwInfo: { requestedGw: gw, latestGw, resolvedSeason: season },
         dataSource: dataSource,
@@ -778,8 +779,8 @@ async function loadTablesViewUsingAggregates() {
           entryIds: validParticipants.map(p => p.entryId).slice(0, 5),
           sampleHistory: sortedSeasonRows[0]
         },
-        computedRows: sortedSeasonRows.slice(0, 5).map(row => ({
-          pos: row.pos,
+        computedRows: seasonRows.slice(0, 5).map(row => ({
+          pos: row.seasonPos,
           entryId: row.entryId,
           displayName: row.displayName,
           totalPoints: row.totalPoints,
@@ -810,8 +811,8 @@ async function loadTablesViewUsingAggregates() {
     }
     
     // Step 5: Render tables with the computed data
-    populateSeasonTable?.(sortedSeasonRows, bootstrap);
-    populateGameweekTable?.(sortedGwRows, bootstrap, latestGw);
+    populateSeasonTable?.(seasonRows, bootstrap);
+    populateGameweekTable?.(gwRows, bootstrap, latestGw);
     
     console.info('[Tables] Successfully loaded with', rows.length, 'rows, GW:', latestGw);
     
@@ -987,16 +988,18 @@ function populateGameweekTable(rows, bootstrap, latestGw) {
   
   tbody.innerHTML = '';
   
-  rows.forEach(row => {
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const pos = r.gwPos ?? (i + 1);
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${row.pos}</td>
-      <td>${row.displayName}</td>
-      <td>${row.latestGwPoints}</td>
-      <td>${row.latestGw}</td>
+      <td>${pos}</td>
+      <td>${r.displayName}</td>
+      <td>${r.latestGwPoints}</td>
+      <td>${r.latestGw}</td>
     `;
     tbody.appendChild(tr);
-  });
+  }
   
   // Update GW header
   const gwTitle = document.getElementById('latestGwTitle') || document.getElementById('currentGameweekLabel') || document.querySelector('.gw-title') || (function(){ const el = document.createElement('div'); el.id = 'latestGwTitle'; const header = document.querySelector('#gameweekTable .table-header'); if (header) header.appendChild(el); return el; })();
