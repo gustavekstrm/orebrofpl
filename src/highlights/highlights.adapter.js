@@ -111,5 +111,34 @@ export async function fetchWeeklyAggregates(gw, entryIds, context = {}) {
   return result;
 }
 
-export default { fetchWeeklyAggregates };
+import { PROXY_BASE } from '../config/network.js';
+
+/**
+ * Optional batch captain points fetch. Returns null if unsupported.
+ * @param {number} gw
+ * @param {number[]} entryIds
+ * @returns {Promise<{ entryId:number, captainPoints:number }[]|null>}
+ */
+export async function getCaptainPointsBatch(gw, entryIds) {
+  try {
+    if (!gw || !Array.isArray(entryIds) || entryIds.length === 0) return null;
+    const ids = entryIds.join(',');
+    const url = `${PROXY_BASE}/api/picks/batch?gw=${encodeURIComponent(gw)}&ids=${encodeURIComponent(ids)}`;
+    const r = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!r.ok) {
+      // If not implemented or not found, treat as unsupported
+      if (r.status === 404 || r.status === 501) return null;
+      // Other errors: also treat as unsupported (do not throw)
+      return null;
+    }
+    const data = await r.json();
+    const arr = Array.isArray(data) ? data : [];
+    return arr.map(x => ({ entryId: Number(x?.entryId || x?.id || x?.entry || 0), captainPoints: Number(x?.captainPoints || 0) }));
+  } catch (_) {
+    // Network error: unsupported
+    return null;
+  }
+}
+
+export default { fetchWeeklyAggregates, getCaptainPointsBatch };
 
