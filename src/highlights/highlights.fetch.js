@@ -16,11 +16,10 @@ export async function getAggregateRowsProxy(gw, entryIds) {
   }
 }
 
-// expose only for highlights usage
+// expose for highlights only
 if (typeof window !== 'undefined') {
-  // One-time log for diagnostics
-  try { console.debug('[highlights] using proxy', PROXY_BASE, '/api/aggregate/rows'); } catch(_) {}
-  window.getAggregateRows = getAggregateRowsProxy;
+  window.HIGHLIGHTS_GET_ROWS = getAggregateRowsProxy;
+  console.debug('[highlights] using proxy via HIGHLIGHTS_GET_ROWS');
 }
 
 export default { getAggregateRowsProxy };

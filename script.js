@@ -1091,9 +1091,16 @@ function safeInit() {
     activateTab('season');
 
     // Only attempt to mount highlights when on highlights page and tables/aggregates are ready
-    let highlightsMounted = false;
     async function tryMountHighlights() {
-      if (highlightsMounted) return;
+      // Strict guard: only run on highlights page
+      const isHighlightsPage = !!document.querySelector('#weekly-highlights, #highlights, [data-page="highlights"]');
+      if (!isHighlightsPage) return;
+      
+      // Idempotent flag to avoid duplicate renders
+      window.__HIGHLIGHTS_MOUNTED__ ||= false;
+      if (window.__HIGHLIGHTS_MOUNTED__) return;
+      window.__HIGHLIGHTS_MOUNTED__ = true;
+      
       const start = performance.now();
       try {
         const latestGw = await getLatestGwOnce();
@@ -1109,7 +1116,6 @@ function safeInit() {
             },
             context: { allowPicks: false }
           });
-          highlightsMounted = true;
           console.debug('[highlights] mount ok in', Math.round(performance.now() - start), 'ms');
         }
       } catch (e) {
@@ -1121,7 +1127,7 @@ function safeInit() {
     const originalNavigateTo = navigateTo;
     navigateTo = function(key) {
       originalNavigateTo(key);
-      if (key === 'highlights' && !highlightsMounted) {
+      if (key === 'highlights') {
         setTimeout(tryMountHighlights, 0);
       }
     };
@@ -1185,16 +1191,14 @@ function safeInit() {
         // Only call highlights if currently on highlights page
         const currentSection = (location.hash || '').replace('#', '');
         if (currentSection === 'highlights') {
-          await call();
+          await tryMountHighlights();
         }
         
         // Listen for navigation to highlights page
         const tab = document.querySelector('[data-nav="highlights"], a[href*="highlights"]');
         if (tab) {
           tab.addEventListener('click', () => {
-            if (!highlightsMounted) {
-              setTimeout(call, 0);
-            }
+            setTimeout(tryMountHighlights, 0);
           });
         }
       });

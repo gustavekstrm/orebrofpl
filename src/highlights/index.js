@@ -6,13 +6,17 @@ import './highlights.fetch.js';
 import { pickWeeklyWinner, pickWeeklyLast, pickBottomN, computeBeerTiers, pickWorstCaptain } from './highlights.logic.js';
 import { tallySeason } from './highlights.season.js';
 
+// Capture the private reference at import time and never touch window.getAggregateRows
+const getRows = (...args) => window.HIGHLIGHTS_GET_ROWS?.(...args) ?? Promise.resolve([]);
+
 /**
  * @param {{ gw: number, entryIds: number[], selectors?: {}, context?: { allowPicks?: boolean } }} opts
  */
 export async function mountHighlights({ gw, entryIds, selectors, context }) {
   try {
-    // Fetch rows via proxy-backed getAggregateRows
-    const rows = await window.getAggregateRows(gw, entryIds);
+    // Fetch rows via private proxy-backed reference
+    const rows = await getRows(gw, entryIds);
+    console.debug('[highlights] rows:', rows?.length);
     
     // Compute weekly highlights
     const winner = pickWeeklyWinner(rows); // Veckans Raket
@@ -20,24 +24,35 @@ export async function mountHighlights({ gw, entryIds, selectors, context }) {
     const roast4 = pickBottomN(rows, 4); // Svagaste (4 st)
     const beer = computeBeerTiers(rows, gw); // 3 kort
     
-    // Render into existing containers (no new markup; clear container.innerHTML and fill)
+    // Helper functions for DOM operations
+    const $ = s => document.querySelector(s);
+    const write = (el, html) => { 
+      if(!el) return; 
+      el.innerHTML=''; 
+      el.innerHTML = html; 
+      el.closest('[hidden],.hidden')?.classList?.remove?.('hidden'); 
+      el.removeAttribute?.('hidden'); 
+    };
+    
+    // Always clear and write containers (no early return)
     
     // Raket/Sopa: fill title & "X poäng"
-    const rocketEl = document.querySelector('#weeklyRocket');
-    const flopEl = document.querySelector('#weeklyFlop');
-    if (rocketEl && winner) {
-      rocketEl.textContent = `${winner.playerName} - ${winner.gwPoints} poäng`;
+    const rocketEl = $('#weeklyRocket');
+    const flopEl = $('#weeklyFlop');
+    if (rocketEl) {
+      rocketEl.textContent = winner ? `${winner.playerName} - ${winner.gwPoints} poäng` : 'Data saknas';
     }
-    if (flopEl && loser) {
-      flopEl.textContent = `${loser.playerName} - ${loser.gwPoints} poäng`;
+    if (flopEl) {
+      flopEl.textContent = loser ? `${loser.playerName} - ${loser.gwPoints} poäng` : 'Data saknas';
     }
     
     // Svagaste: 4 rows/cards with name + "X p"
-    const roastEl = document.querySelector('#roastGrid');
+    const roastEl = $('#roastGrid');
     if (roastEl) {
-      roastEl.innerHTML = roast4.map(r => 
+      const roastHtml = roast4.map(r => 
         `<div class="roast-card sopa"><div class="roast-title">${r.playerName} – ${r.teamName}</div><div class="roast-message">${r.gwPoints} p</div></div>`
       ).join('');
+      write(roastEl, roastHtml);
       
       // Toggle ❌ placeholder for "svagaste": hide when roast4.length>0, show otherwise
       const header = roastEl.closest('.roast-section')?.querySelector('h2');
@@ -48,62 +63,67 @@ export async function mountHighlights({ gw, entryIds, selectors, context }) {
     }
     
     // Öl-nivåer: exactly 3 cards with labels "Öl", "Alkoholfri", "Ingen öl"; if bucket empty: render card with "Data saknas"
-    const beerEl = document.querySelector('#beerGrid');
+    const beerEl = $('#beerGrid');
     if (beerEl) {
-      beerEl.innerHTML = beer.map(t => {
+      const beerHtml = beer.map(t => {
         const playerText = t ? `${t.playerName} – ${t.gwPoints} p` : 'Data saknas';
         return `<div class="beer-card"><div class="beer-level">${t?.label || 'N/A'}</div><div class="beer-player">${playerText}</div></div>`;
       }).join('');
+      write(beerEl, beerHtml);
     }
     
     // Veckans sämsta kapten:
     // If context.allowPicks === true and batch route exists on proxy (e.g. /api/picks/batch?gw=&ids=), fetch and build Map(entryId->captainPoints), otherwise leave null.
     // Render card with lowest captainPoints if data exists; otherwise show "Data saknas denna vecka".
-    const captainEl = document.querySelector('#weeklyCaptain');
-    if (captainEl && context.allowPicks === true) {
-      try {
-        // Try to fetch captain batch data
-        const url = `${window.PROXY_BASE || 'https://<YOUR_PROXY_HOST>'}/api/picks/batch?gw=${encodeURIComponent(gw)}&ids=${encodeURIComponent(entryIds.join(','))}`;
-        const response = await fetch(url, { headers: { Accept: 'application/json' } });
-        if (response.ok) {
-          const captains = await response.json();
-          if (Array.isArray(captains)) {
-            const capMap = new Map(captains.map(c => [Number(c.entryId), Number(c.captainPoints)]));
-            const worst = pickWorstCaptain(rows, capMap);
-            if (worst) {
-              captainEl.textContent = `${worst.playerName} - ${worst.captainPoints} poäng`;
+    const captainEl = $('#weeklyCaptain');
+    if (captainEl) {
+      if (context.allowPicks === true) {
+        try {
+          // Try to fetch captain batch data
+          const url = `${window.PROXY_BASE || 'https://<YOUR_PROXY_HOST>'}/api/picks/batch?gw=${encodeURIComponent(gw)}&ids=${encodeURIComponent(entryIds.join(','))}`;
+          const response = await fetch(url, { headers: { Accept: 'application/json' } });
+          if (response.ok) {
+            const captains = await response.json();
+            if (Array.isArray(captains)) {
+              const capMap = new Map(captains.map(c => [Number(c.entryId), Number(c.captainPoints)]));
+              const worst = pickWorstCaptain(rows, capMap);
+              if (worst) {
+                captainEl.textContent = `${worst.playerName} - ${worst.captainPoints} poäng`;
+              } else {
+                captainEl.textContent = 'Data saknas denna vecka';
+              }
             } else {
               captainEl.textContent = 'Data saknas denna vecka';
             }
           } else {
             captainEl.textContent = 'Data saknas denna vecka';
           }
-        } else {
+        } catch (e) {
           captainEl.textContent = 'Data saknas denna vecka';
         }
-      } catch (e) {
+      } else {
         captainEl.textContent = 'Data saknas denna vecka';
       }
-    } else if (captainEl) {
-      captainEl.textContent = 'Data saknas denna vecka';
     }
     
     // Wall of Fame / Shame + "Temporär kung"
-    const tallies = await tallySeason({ currentGw: gw, entryIds, fetchRows: window.getAggregateRows });
+    const tallies = await tallySeason({ currentGw: gw, entryIds, fetchRows: getRows });
     
     // Wall of Fame: "Flest veckans raket: <namn> — <antal> st"
-    const fameEl = document.querySelector('#fameStats');
+    const fameEl = $('#fameStats');
     if (fameEl) {
       const fameText = tallies.fame ? `Flest veckans raket: ${tallies.fame.playerName} — ${tallies.fame.count} st` : 'Flest veckans raket: Data saknas';
       const kingText = tallies.currentKing ? `Temporär kung: ${tallies.currentKing.playerName}` : '';
-      fameEl.innerHTML = `<div class="wall-stat"><span class="wall-stat-label">${fameText}</span></div>${kingText ? `<div class="wall-stat"><span class="wall-stat-label">${kingText}</span></div>` : ''}`;
+      const fameHtml = `<div class="wall-stat"><span class="wall-stat-label">${fameText}</span></div>${kingText ? `<div class="wall-stat"><span class="wall-stat-label">${kingText}</span></div>` : ''}`;
+      write(fameEl, fameHtml);
     }
     
     // Wall of Shame: "Flest veckans sopa: <namn> — <antal> st"
-    const shameEl = document.querySelector('#shameStats');
+    const shameEl = $('#shameStats');
     if (shameEl) {
       const shameText = tallies.shame ? `Flest veckans sopa: ${tallies.shame.playerName} — ${tallies.shame.count} st` : 'Flest veckans sopa: Data saknas';
-      shameEl.innerHTML = `<div class="wall-stat"><span class="wall-stat-label">${shameText}</span></div>`;
+      const shameHtml = `<div class="wall-stat"><span class="wall-stat-label">${shameText}</span></div>`;
+      write(shameEl, shameHtml);
     }
     
     // Log counts and show muted banner on fetch errors, without throw
@@ -126,6 +146,19 @@ export async function mountHighlights({ gw, entryIds, selectors, context }) {
     console.warn('[highlights] fetch failed:', e?.message || e);
   }
 }
+
+// Runtime self-check (dev only)
+window.__debugHighlightsReport = () => {
+  const count = s => (document.querySelector(s)?.children?.length)||0;
+  console.table({
+    rocket: !!document.querySelector('#weeklyRocket'),
+    flop:   !!document.querySelector('#weeklyFlop'),
+    roastN: count('#roastGrid'),
+    beerN:  count('#beerGrid'),
+    fameN:  count('#fameStats'),
+    shameN: count('#shameStats'),
+  });
+};
 
 export default { mountHighlights };
 
