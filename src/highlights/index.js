@@ -9,6 +9,15 @@ import { tallySeason } from './highlights.season.js';
 // Capture the private reference at import time and never touch window.getAggregateRows
 const getRows = (...args) => window.HIGHLIGHTS_GET_ROWS?.(...args) ?? Promise.resolve([]);
 
+// Helper for local banner rendering (only within highlights module)
+function renderHighlightsBanner(targetSel = '#weekly-highlights, #highlights') {
+  const host = document.querySelector(targetSel);
+  if (!host) return;
+  host.insertAdjacentHTML('beforeend',
+    '<div class="muted-banner">Kunde inte hämta veckans höjdpunkter just nu.</div>'
+  );
+}
+
 /**
  * @param {{ gw: number, entryIds: number[], selectors?: {}, context?: { allowPicks?: boolean } }} opts
  */
@@ -17,6 +26,13 @@ export async function mountHighlights({ gw, entryIds, selectors, context }) {
     // Fetch rows via private proxy-backed reference
     const rows = await getRows(gw, entryIds);
     console.debug('[highlights] rows:', rows?.length);
+    
+    // Handle empty rows with local fallback
+    if (!Array.isArray(rows) || rows.length === 0) {
+      renderHighlightsBanner();
+      console.warn('[highlights] no rows available');
+      return;
+    }
     
     // Compute weekly highlights
     const winner = pickWeeklyWinner(rows); // Veckans Raket
@@ -138,11 +154,8 @@ export async function mountHighlights({ gw, entryIds, selectors, context }) {
     });
     
   } catch (e) {
-    // Show muted banner on errors
-    const banner = document.querySelector('#highlights') || document.body;
-    if (banner && !banner.querySelector('.muted-banner')) {
-      banner.insertAdjacentHTML('beforeend', '<div class="muted-banner">Kunde inte hämta veckans höjdpunkter just nu.</div>');
-    }
+    // Show muted banner on errors (local fallback only)
+    renderHighlightsBanner();
     console.warn('[highlights] fetch failed:', e?.message || e);
   }
 }

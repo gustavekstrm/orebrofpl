@@ -1128,78 +1128,62 @@ function safeInit() {
     navigateTo = function(key) {
       originalNavigateTo(key);
       if (key === 'highlights') {
-        setTimeout(tryMountHighlights, 0);
+        // Trigger lazy-load if not already mounted
+        if (!window.__HIGHLIGHTS_MOUNTED__) {
+          const event = new Event('DOMContentLoaded');
+          document.dispatchEvent(event); // triggers the guarded init above if on the highlights view
+        }
       }
     };
+    
+    // SPA/tab navigation hook (idempotent)
+    const hlTab = document.querySelector('[data-tab="highlights"], #tab-highlights, a[href*="highlights"]');
+    if (hlTab) {
+      hlTab.addEventListener('click', () => {
+        if (window.__HIGHLIGHTS_MOUNTED__) return; // already mounted
+        const event = new Event('DOMContentLoaded');
+        document.dispatchEvent(event); // triggers the guarded init above if on the highlights view
+      });
+    }
 
-    // Hard-init: ensure highlights init even if above path misses
+    // Hard-init: ensure highlights init only on highlights page with lazy-loading
     (function ensureHighlightsInit(){
-      // Import proxy health check
-      let _proxyHealthy = null;
-      import('./src/highlights/health.js').then(mod => { _proxyHealthy = mod.proxyHealthy; }).catch(()=>{});
       const onReady = (fn) => {
         if (document.readyState === 'complete' || document.readyState === 'interactive') return fn();
         document.addEventListener('DOMContentLoaded', fn, { once: true });
       };
-      const waitFor = async (pred, ms=2000) => {
-        const t0 = performance.now();
-        while (performance.now() - t0 < ms) {
-          if (pred()) return true;
-          await new Promise(r=>setTimeout(r,50));
-        }
-        return false;
-      };
+      
       onReady(async () => {
         console.debug('[highlights][boot] ready');
-        // Preload highlights module to ensure proxy-backed getAggregateRows is defined
-        try { await import('./src/highlights/index.js'); } catch(_) {}
-        const ok = await waitFor(() => typeof window.getAggregateRows === 'function');
-        console.debug('[highlights][boot] hasGetAggregateRows:', ok);
-        if (!ok) console.warn('[highlights] getAggregateRows not ready');
-        // Gate on proxy health; show muted banner if unhealthy
-        try {
-          if (typeof _proxyHealthy === 'function') {
-            const healthy = await _proxyHealthy();
-            if (!healthy) {
-              console.warn('[highlights] proxy not healthy; showing muted banner');
-              const banner = document.querySelector('#weekly-highlights, #highlights') || document.body;
-              if (banner) banner.insertAdjacentHTML('beforeend', '<div class="muted-banner">Kunde inte hämta veckans höjdpunkter just nu.</div>');
-              return; // Skip highlights init; tables unaffected
-            }
-            console.debug('[highlights] proxy healthy, booting…');
-          }
-        } catch(_) {}
-        const call = async () => {
-          try {
-            console.debug('[highlights][boot] calling renderHighlights');
-            await window.renderHighlights?.({
-              gw: await (window.getLatestGwOnce?.() ?? Promise.resolve(window.CURRENT_GW)),
-              entryIds: window.ENTRY_IDS,
-              selectors: {
-                roast: '#roastGrid,[data-role="roast"]',
-                beer:  '#beerGrid,[data-role="beer"]',
-                fame:  '#fameStats,[data-role="wall-fame"]',
-                shame: '#shameStats,[data-role="wall-shame"]',
-              },
-              context: { allowPicks: false }
-            });
-            console.debug('[highlights][bootstrap] renderHighlights called');
-          } catch (e) {
-            console.warn('[highlights] render error', e);
-          }
-        };
-        // Only call highlights if currently on highlights page
-        const currentSection = (location.hash || '').replace('#', '');
-        if (currentSection === 'highlights') {
-          await tryMountHighlights();
+        
+        // Route guard: only run on highlights page
+        const isHighlightsPage = !!document.querySelector('#weekly-highlights, #highlights, [data-page="highlights"]');
+        if (!isHighlightsPage) {
+          console.debug('[highlights][boot] not on highlights page, skipping');
+          return;
         }
         
-        // Listen for navigation to highlights page
-        const tab = document.querySelector('[data-nav="highlights"], a[href*="highlights"]');
-        if (tab) {
-          tab.addEventListener('click', () => {
-            setTimeout(tryMountHighlights, 0);
+        // Lazy-load the module so it never executes on Tabeller
+        try {
+          const mod = await import('./src/highlights/index.js');
+          if (window.__HIGHLIGHTS_MOUNTED__) return;
+          window.__HIGHLIGHTS_MOUNTED__ = true;
+          
+          const gw = await (window.getLatestGwOnce?.() ?? Promise.resolve(window.CURRENT_GW));
+          await mod.mountHighlights?.({
+            gw,
+            entryIds: window.ENTRY_IDS,
+            selectors: {
+              roast:  '#roastGrid,[data-role="roast"]',
+              beer:   '#beerGrid,[data-role="beer"]',
+              fame:   '#fameStats,[data-role="wall-fame"]',
+              shame:  '#shameStats,[data-role="wall-shame"]'
+            },
+            context: { allowPicks: false }
           });
+          console.debug('[highlights][boot] lazy-loaded and mounted');
+        } catch (e) {
+          console.warn('[highlights][boot] lazy-load failed:', e?.message || e);
         }
       });
     })();
