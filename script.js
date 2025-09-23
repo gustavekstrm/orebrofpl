@@ -1090,8 +1090,10 @@ function safeInit() {
     });
     activateTab('season');
 
-    // Attempt to mount highlights when tables/aggregates are ready
-    (async function tryMountHighlights(){
+    // Only attempt to mount highlights when on highlights page and tables/aggregates are ready
+    let highlightsMounted = false;
+    async function tryMountHighlights() {
+      if (highlightsMounted) return;
       const start = performance.now();
       try {
         const latestGw = await getLatestGwOnce();
@@ -1105,14 +1107,24 @@ function safeInit() {
               fame: document.querySelector('#fameStats,[data-role="wall-fame"]') ? '#fameStats,[data-role="wall-fame"]' : null,
               shame: document.querySelector('#shameStats,[data-role="wall-shame"]') ? '#shameStats,[data-role="wall-shame"]' : null
             },
-            context: { allowPicksInHighlights: false }
+            context: { allowPicks: false }
           });
+          highlightsMounted = true;
           console.debug('[highlights] mount ok in', Math.round(performance.now() - start), 'ms');
         }
       } catch (e) {
         console.warn('[highlights] mount failed:', e?.message || e);
       }
-    })();
+    }
+    
+    // Mount highlights only when navigating to highlights section
+    const originalNavigateTo = navigateTo;
+    navigateTo = function(key) {
+      originalNavigateTo(key);
+      if (key === 'highlights' && !highlightsMounted) {
+        setTimeout(tryMountHighlights, 0);
+      }
+    };
 
     // Hard-init: ensure highlights init even if above path misses
     (function ensureHighlightsInit(){
@@ -1170,10 +1182,20 @@ function safeInit() {
             console.warn('[highlights] render error', e);
           }
         };
-        await call();
-        const tab = document.querySelector('[data-tab="highlights"], #tab-highlights, a[href*="highlights"]');
+        // Only call highlights if currently on highlights page
+        const currentSection = (location.hash || '').replace('#', '');
+        if (currentSection === 'highlights') {
+          await call();
+        }
+        
+        // Listen for navigation to highlights page
+        const tab = document.querySelector('[data-nav="highlights"], a[href*="highlights"]');
         if (tab) {
-          tab.addEventListener('click', () => setTimeout(call, 0));
+          tab.addEventListener('click', () => {
+            if (!highlightsMounted) {
+              setTimeout(call, 0);
+            }
+          });
         }
       });
     })();

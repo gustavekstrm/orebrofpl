@@ -1,180 +1,129 @@
 /**
  * Orchestrator for highlights: fetch → compute → render → inject
+ * Mounts only on Highlights page, always writes DOM
  */
 import './highlights.fetch.js';
-import { fetchWeeklyAggregates, getCaptainPointsBatch } from './highlights.adapter.js';
-import { computeWeeklyHighlights, pickBottomN, computeBeerTiers, pickWallSets, tallySeasonTopsAndBottoms, pickWorstCaptain } from './highlights.logic.js';
-import { renderHighlightsHtml } from './highlights.view.js';
+import { pickWeeklyWinner, pickWeeklyLast, pickBottomN, computeBeerTiers, pickWorstCaptain } from './highlights.logic.js';
+import { tallySeason } from './highlights.season.js';
 
 /**
- * @param {{ gw: number, entryIds: number[], mountSelector: string, context?: { allowPicksInHighlights?: boolean } }} opts
+ * @param {{ gw: number, entryIds: number[], selectors?: {}, context?: { allowPicks?: boolean } }} opts
  */
-export async function mountHighlights(opts) {
-  const { gw, entryIds, selectors = {}, context = {}, mountSelector } = opts || {};
+export async function mountHighlights({ gw, entryIds, selectors, context }) {
   try {
-    const t0 = performance.now();
-    const aggregates = await fetchWeeklyAggregates(gw, entryIds, context);
-    const t1 = performance.now();
-    const mount = document.querySelector(mountSelector || '#weekly-highlights');
-    if (!Array.isArray(aggregates) || aggregates.length === 0) {
-      if (mount) mount.innerHTML = '<div class="highlights__card highlights__card--disabled">Kunde inte hämta veckans höjdpunkter just nu.</div>';
-      console.warn('[highlights] aggregates empty');
-      // continue to attempt auxiliary sections with empty lists so placeholders can toggle
+    // Fetch rows via proxy-backed getAggregateRows
+    const rows = await window.getAggregateRows(gw, entryIds);
+    
+    // Compute weekly highlights
+    const winner = pickWeeklyWinner(rows); // Veckans Raket
+    const loser = pickWeeklyLast(rows); // Veckans Sopa
+    const roast4 = pickBottomN(rows, 4); // Svagaste (4 st)
+    const beer = computeBeerTiers(rows, gw); // 3 kort
+    
+    // Render into existing containers (no new markup; clear container.innerHTML and fill)
+    
+    // Raket/Sopa: fill title & "X poäng"
+    const rocketEl = document.querySelector('#weeklyRocket');
+    const flopEl = document.querySelector('#weeklyFlop');
+    if (rocketEl && winner) {
+      rocketEl.textContent = `${winner.playerName} - ${winner.gwPoints} poäng`;
     }
-    const hl = computeWeeklyHighlights(aggregates);
-    const t2 = performance.now();
-    let html = renderHighlightsHtml(hl);
-    const t3 = performance.now();
-    if (mount) mount.innerHTML = html;
-    console.debug('[highlights][t=ms]', { fetch: Math.round(t1 - t0), compute: Math.round(t2 - t1), render: Math.round(t3 - t2) });
-
-    // Populate auxiliary sections if present in DOM (reuse same aggregates)
-    try {
-      // Dev-only debug helper
-      if (typeof window !== 'undefined') {
-        window.debugHighlights = async () => {
-          try {
-            const latest = await (window.getLatestGwOnce?.() ?? Promise.resolve(gw));
-            const rows = await window.getAggregateRows?.(latest, window.ENTRY_IDS);
-            if (Array.isArray(rows)) {
-              try { console.table(rows.slice(0,5)); } catch(_) { console.log(rows.slice(0,5)); }
-              const bottom = pickBottomN(rows, 4).map(x => [x.playerName, x.gwPoints]);
-              console.log('bottom4', bottom);
-              const beer = computeBeerTiers(rows, latest).map(x => [x.label, x.playerName, x.gwRank]);
-              console.log('beer', beer);
+    if (flopEl && loser) {
+      flopEl.textContent = `${loser.playerName} - ${loser.gwPoints} poäng`;
+    }
+    
+    // Svagaste: 4 rows/cards with name + "X p"
+    const roastEl = document.querySelector('#roastGrid');
+    if (roastEl) {
+      roastEl.innerHTML = roast4.map(r => 
+        `<div class="roast-card sopa"><div class="roast-title">${r.playerName} – ${r.teamName}</div><div class="roast-message">${r.gwPoints} p</div></div>`
+      ).join('');
+      
+      // Toggle ❌ placeholder for "svagaste": hide when roast4.length>0, show otherwise
+      const header = roastEl.closest('.roast-section')?.querySelector('h2');
+      if (header) {
+        const base = 'Veckans svagaste insatser...';
+        header.textContent = roast4.length > 0 ? base : `${base} ❌`;
+      }
+    }
+    
+    // Öl-nivåer: exactly 3 cards with labels "Öl", "Alkoholfri", "Ingen öl"; if bucket empty: render card with "Data saknas"
+    const beerEl = document.querySelector('#beerGrid');
+    if (beerEl) {
+      beerEl.innerHTML = beer.map(t => {
+        const playerText = t ? `${t.playerName} – ${t.gwPoints} p` : 'Data saknas';
+        return `<div class="beer-card"><div class="beer-level">${t?.label || 'N/A'}</div><div class="beer-player">${playerText}</div></div>`;
+      }).join('');
+    }
+    
+    // Veckans sämsta kapten:
+    // If context.allowPicks === true and batch route exists on proxy (e.g. /api/picks/batch?gw=&ids=), fetch and build Map(entryId->captainPoints), otherwise leave null.
+    // Render card with lowest captainPoints if data exists; otherwise show "Data saknas denna vecka".
+    const captainEl = document.querySelector('#weeklyCaptain');
+    if (captainEl && context.allowPicks === true) {
+      try {
+        // Try to fetch captain batch data
+        const url = `${window.PROXY_BASE || 'https://<YOUR_PROXY_HOST>'}/api/picks/batch?gw=${encodeURIComponent(gw)}&ids=${encodeURIComponent(entryIds.join(','))}`;
+        const response = await fetch(url, { headers: { Accept: 'application/json' } });
+        if (response.ok) {
+          const captains = await response.json();
+          if (Array.isArray(captains)) {
+            const capMap = new Map(captains.map(c => [Number(c.entryId), Number(c.captainPoints)]));
+            const worst = pickWorstCaptain(rows, capMap);
+            if (worst) {
+              captainEl.textContent = `${worst.playerName} - ${worst.captainPoints} poäng`;
             } else {
-              console.warn('debugHighlights: no rows');
+              captainEl.textContent = 'Data saknas denna vecka';
             }
-          } catch (e) {
-            console.warn('debugHighlights failed:', e?.message || e);
+          } else {
+            captainEl.textContent = 'Data saknas denna vecka';
           }
-        };
-      }
-      const roastSel = selectors.roast || '#roastGrid';
-      const roastEl = document.querySelector(roastSel);
-      if (roastEl) {
-        let rows = [];
-        try {
-          if (typeof window.getAggregateRows === 'function') {
-            rows = await window.getAggregateRows(gw, entryIds);
-          }
-        } catch(_) { rows = []; }
-        const roastItems = pickBottomN(rows, 4);
-        const html = roastItems.map(r => `<div class=\"roast-card sopa\"><div class=\"roast-title\">${r.playerName} – ${r.teamName}</div><div class=\"roast-message\">${r.gwPoints} p</div></div>`).join('');
-        roastEl.innerHTML = html;
-        const header = roastEl.closest('.roast-section')?.querySelector('h2');
-        if (header) {
-          const base = 'Veckans svagaste insatser...';
-          header.textContent = roastItems.length > 0 ? base : `${base} ❌`;
+        } else {
+          captainEl.textContent = 'Data saknas denna vecka';
         }
-      } else {
-        console.warn('[highlights] Missing container:', roastSel);
+      } catch (e) {
+        captainEl.textContent = 'Data saknas denna vecka';
       }
-      const beerSel = selectors.beer || '#beerGrid';
-      const beerEl = document.querySelector(beerSel);
-      if (beerEl) {
-        let beerRows = [];
-        try {
-          if (typeof window.getAggregateRows === 'function') {
-            beerRows = await window.getAggregateRows(gw, entryIds);
-          }
-        } catch(_) { beerRows = []; }
-        const tiers = computeBeerTiers(beerRows, gw);
-        // Exactly three cards; reuse existing classes/markup
-        beerEl.innerHTML = tiers.map(t => {
-          const playerText = t.disabled ? 'Data saknas' : `${t.playerName} – ${t.gwPoints} p`;
-          return `<div class=\"beer-card\"><div class=\"beer-level\">${t.label}</div><div class=\"beer-player\">${playerText}</div></div>`;
-        }).join('');
-      } else {
-        console.warn('[highlights] Missing container:', beerSel);
-      }
-      const fameSel = selectors.fame || '#fameStats';
-      const shameSel = selectors.shame || '#shameStats';
-      const fame = document.querySelector(fameSel);
-      const shame = document.querySelector(shameSel);
-      if (fame && shame) {
-        let tallies = { fame: null, shame: null, currentKing: null };
-        try {
-          const fetchRows = typeof window.getAggregateRows === 'function' ? window.getAggregateRows : null;
-          tallies = await tallySeasonTopsAndBottoms({ currentGw: gw, entryIds, fetchRows });
-        } catch (e) {
-          console.warn('[highlights] tally failed:', e?.message || e);
-        }
-        const fameText = tallies.fame ? `Flest veckans raket: ${tallies.fame.playerName} — ${tallies.fame.count} st` : 'Flest veckans raket: Data saknas';
-        const shameText = tallies.shame ? `Flest veckans sopa: ${tallies.shame.playerName} — ${tallies.shame.count} st` : 'Flest veckans sopa: Data saknas';
-        const kingText = tallies.currentKing ? `Temporär kung: ${tallies.currentKing.playerName}` : '';
-        const kingHtml = kingText ? `<div class=\"wall-stat\"><span class=\"wall-stat-label\">Temporär kung</span><span class=\"wall-stat-value\">${tallies.currentKing.playerName}</span></div>` : '';
-        fame.innerHTML = `<div class=\"wall-stat\"><span class=\"wall-stat-label\">${fameText}</span></div>${kingHtml}`;
-        shame.innerHTML = `<div class=\"wall-stat\"><span class=\"wall-stat-label\">${shameText}</span></div>`;
-      } else {
-        if (!fame) console.warn('[highlights] Missing container:', fameSel);
-        if (!shame) console.warn('[highlights] Missing container:', shameSel);
-      }
-
-      // Sämsta kapten (optional, proxy batch only)
-      const ENABLE_HIGHLIGHTS_CAPTAIN = true;
-      if (ENABLE_HIGHLIGHTS_CAPTAIN) {
-        try {
-          const captains = await getCaptainPointsBatch(gw, entryIds);
-          const worst = captains ? pickWorstCaptain(aggregates, captains) : null;
-          // Replace the default "Sämsta kapten" card in the highlights header section
-          const container = mount || document.querySelector('#weekly-highlights');
-          if (container) {
-            const cards = container.querySelectorAll('.highlights__card');
-            // The 6th card is "Sämsta kapten" in renderHighlightsHtml order
-            const kaptenCard = cards && cards[5];
-            if (kaptenCard) {
-              const title = kaptenCard.querySelector('.highlights__title');
-              if (title && title.textContent && title.textContent.toLowerCase().includes('kapten')) {
-                const metas = kaptenCard.querySelectorAll('.highlights__meta');
-                if (!worst || captains === null) {
-                  // Show disabled state text
-                  if (kaptenCard.classList) kaptenCard.classList.add('highlights__card--disabled');
-                  if (metas[0]) metas[0].textContent = 'Data saknas denna vecka';
-                  if (metas[1]) metas[1].textContent = '';
-                } else {
-                  if (kaptenCard.classList) kaptenCard.classList.remove('highlights__card--disabled');
-                  if (metas[0]) metas[0].textContent = `${worst.playerName}${worst.teamName ? ' — ' + worst.teamName : ''}`;
-                  if (metas[1]) metas[1].textContent = `${worst.captainPoints} poäng`;
-                  else {
-                    // If second meta missing, append one
-                    const meta = document.createElement('div');
-                    meta.className = 'highlights__meta';
-                    meta.textContent = `${worst.captainPoints} poäng`;
-                    kaptenCard.appendChild(meta);
-                  }
-                }
-              }
-            }
-          }
-        } catch (e) {
-          console.warn('[highlights] captain batch unsupported or failed:', e?.message || e);
-        }
-      }
-      // Debug available containers map
-      console.debug('[highlights] containers', {
-        roast: !!document.querySelector(roastSel),
-        beer: !!document.querySelector(beerSel),
-        fame: !!document.querySelector(fameSel),
-        shame: !!document.querySelector(shameSel)
-      });
-    } catch (e) {
-      console.warn('[highlights] aux render failed:', e?.message || e);
+    } else if (captainEl) {
+      captainEl.textContent = 'Data saknas denna vecka';
     }
-    // Warn (non-blocking) if some fack is null
-    const nulls = [
-      ['veckansKanon', hl.veckansKanon],
-      ['veckansSopa', hl.veckansSopa],
-      ['veckansRaket', hl.veckansRaket],
-      ['veckansStörtdyk', hl.veckansStörtdyk]
-    ].filter(([_, v]) => v == null);
-    if (nulls.length) {
-      console.warn('[highlights] Missing data for:', nulls.map(x => x[0]).join(', '));
+    
+    // Wall of Fame / Shame + "Temporär kung"
+    const tallies = await tallySeason({ currentGw: gw, entryIds, fetchRows: window.getAggregateRows });
+    
+    // Wall of Fame: "Flest veckans raket: <namn> — <antal> st"
+    const fameEl = document.querySelector('#fameStats');
+    if (fameEl) {
+      const fameText = tallies.fame ? `Flest veckans raket: ${tallies.fame.playerName} — ${tallies.fame.count} st` : 'Flest veckans raket: Data saknas';
+      const kingText = tallies.currentKing ? `Temporär kung: ${tallies.currentKing.playerName}` : '';
+      fameEl.innerHTML = `<div class="wall-stat"><span class="wall-stat-label">${fameText}</span></div>${kingText ? `<div class="wall-stat"><span class="wall-stat-label">${kingText}</span></div>` : ''}`;
     }
+    
+    // Wall of Shame: "Flest veckans sopa: <namn> — <antal> st"
+    const shameEl = document.querySelector('#shameStats');
+    if (shameEl) {
+      const shameText = tallies.shame ? `Flest veckans sopa: ${tallies.shame.playerName} — ${tallies.shame.count} st` : 'Flest veckans sopa: Data saknas';
+      shameEl.innerHTML = `<div class="wall-stat"><span class="wall-stat-label">${shameText}</span></div>`;
+    }
+    
+    // Log counts and show muted banner on fetch errors, without throw
+    console.debug('[highlights] rendered', { 
+      winner: winner?.playerName, 
+      loser: loser?.playerName, 
+      roast4: roast4.length,
+      beer: beer.length,
+      fame: tallies.fame?.playerName,
+      shame: tallies.shame?.playerName,
+      king: tallies.currentKing?.playerName
+    });
+    
   } catch (e) {
-    const mount = document.querySelector(opts?.mountSelector || '#weekly-highlights');
-    if (mount) mount.innerHTML = '<div class="highlights__card highlights__card--disabled">Kunde inte hämta veckans höjdpunkter just nu.</div>';
-    console.warn('[highlights] render failed:', e?.message || e);
+    // Show muted banner on errors
+    const banner = document.querySelector('#highlights') || document.body;
+    if (banner && !banner.querySelector('.muted-banner')) {
+      banner.insertAdjacentHTML('beforeend', '<div class="muted-banner">Kunde inte hämta veckans höjdpunkter just nu.</div>');
+    }
+    console.warn('[highlights] fetch failed:', e?.message || e);
   }
 }
 

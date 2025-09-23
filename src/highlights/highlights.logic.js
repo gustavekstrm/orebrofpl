@@ -25,6 +25,52 @@
  */
 
 /**
+ * Sort rows by gwPoints desc, then totalPoints desc, then overallRank asc, then name asc
+ * @param {WeeklyAggregate[]} rows
+ * @returns {WeeklyAggregate[]}
+ */
+export function sortTop(rows) {
+  return [...rows].sort((a, b) =>
+    (b.gwPoints - a.gwPoints) ||
+    (b.totalPoints - a.totalPoints) ||
+    (a.overallRank - b.overallRank) ||
+    (a.playerName.localeCompare(b.playerName))
+  );
+}
+
+/**
+ * Sort rows by gwPoints asc, then totalPoints asc, then overallRank desc, then name asc
+ * @param {WeeklyAggregate[]} rows
+ * @returns {WeeklyAggregate[]}
+ */
+export function sortBottom(rows) {
+  return [...rows].sort((a, b) =>
+    (a.gwPoints - b.gwPoints) ||
+    (a.totalPoints - b.totalPoints) ||
+    (b.overallRank - a.overallRank) ||
+    (a.playerName.localeCompare(b.playerName))
+  );
+}
+
+/**
+ * Pick weekly winner (Veckans Raket) - top performer by gwPoints
+ * @param {WeeklyAggregate[]} rows
+ * @returns {WeeklyAggregate|null}
+ */
+export function pickWeeklyWinner(rows) {
+  return sortTop(rows)[0] ?? null;
+}
+
+/**
+ * Pick weekly loser (Veckans Sopa) - bottom performer by gwPoints
+ * @param {WeeklyAggregate[]} rows
+ * @returns {WeeklyAggregate|null}
+ */
+export function pickWeeklyLast(rows) {
+  return sortBottom(rows)[0] ?? null;
+}
+
+/**
  * Compute highlights from an array of aggregates.
  * Never throws; returns nulls when unavailable.
  *
@@ -75,27 +121,13 @@ export default { computeWeeklyHighlights };
 
 /**
  * Pick bottom N by gwPoints with deterministic tie-breakers.
- * Tie-break: lower totalPoints, then higher overallRank, then name A→Z
+ * Uses sortBottom for consistent sorting
  * @param {WeeklyAggregate[]} aggregates
  * @param {number} n
  */
 export function pickBottomN(aggregates, n = 4) {
   const arr = Array.isArray(aggregates) ? aggregates.slice() : [];
-  const sorted = arr.sort((a, b) => {
-    const ga = Number(a?.gwPoints ?? a?.latestGwPoints ?? a?.points ?? 0);
-    const gb = Number(b?.gwPoints ?? b?.latestGwPoints ?? b?.points ?? 0);
-    if (ga !== gb) return ga - gb; // asc (bottom)
-    const ta = Number(a?.totalPoints || 0);
-    const tb = Number(b?.totalPoints || 0);
-    if (ta !== tb) return ta - tb; // lower total first
-    const ra = Number(a?.overallRank || 1e12);
-    const rb = Number(b?.overallRank || 1e12);
-    if (ra !== rb) return rb - ra; // higher rank number (worse) first
-    const na = String(a?.playerName || a?.displayName || a?.entry_name || a?.name || '');
-    const nb = String(b?.playerName || b?.displayName || b?.entry_name || b?.name || '');
-    return na.localeCompare(nb);
-  });
-  return sorted.slice(0, n).map(r => ({
+  return sortBottom(arr).slice(0, n).map(r => ({
     playerName: String(r?.playerName || r?.displayName || r?.entry_name || r?.name || ''),
     teamName: String(r?.teamName || r?.team_name || ''),
     gwPoints: Number(r?.gwPoints ?? r?.latestGwPoints ?? r?.points ?? 0)
@@ -148,25 +180,16 @@ export function pickWallSets(aggregates, n = 3) {
 }
 
 /**
- * Deterministic seeded pick from list.
- * Uses a simple hash of the provided seed to index into the list.
+ * Deterministic seeded pick from list using sin-based seeding.
  * @template T
  * @param {T[]} list
- * @param {string|number} seed
+ * @param {string|number} seedNum
  * @returns {T|null}
  */
-export function seededPick(list, seed) {
-  const arr = Array.isArray(list) ? list : [];
-  if (arr.length === 0) return null;
-  const s = String(seed ?? '');
-  // djb2 hash
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) {
-    h = ((h << 5) + h) + s.charCodeAt(i);
-    h |= 0; // 32-bit
-  }
-  const idx = Math.abs(h) % arr.length;
-  return arr[idx] ?? null;
+export function seededPick(list, seedNum) {
+  if (!Array.isArray(list) || list.length === 0) return null;
+  const x = Math.abs(Math.sin(Number(seedNum) || 0)) * 10000;
+  return list[Math.floor(x) % list.length];
 }
 
 /**
@@ -193,42 +216,22 @@ export function rankWithinGw(rows) {
 /**
  * Compute three beer tiers based on GW rank buckets.
  * Buckets: [1,15], [16,25], [26,51].
- * Deterministically pick one per bucket.
+ * Deterministically pick one per bucket using sin-based seeding.
  * @param {WeeklyAggregate[]} rows
  * @param {number} gw
  * @returns {{ label: 'Öl'|'Alkoholfri'|'Ingen öl', playerName: string, teamName: string, gwPoints: number, gwRank: number|null, disabled?: boolean }[]}
  */
 export function computeBeerTiers(rows, gw) {
   const ranked = rankWithinGw(rows);
-  const labels = ['Öl', 'Alkoholfri', 'Ingen öl'];
-  const ranges = [ [1, 15], [16, 25], [26, 51] ];
-
-  // Try to incorporate season into seed if available, else fallback
-  let seasonLabel = undefined;
-  try {
-    // Common globals; non-fatal if missing
-    if (typeof window !== 'undefined') {
-      seasonLabel = window.SEASON || window.CURRENT_SEASON || window.SEASON_LABEL || window.seasonLabel;
-    }
-  } catch(_) {}
-  const seasonSeed = String(seasonLabel || '');
-  const seedBase = seasonSeed ? `${seasonSeed}-${gw}` : `${gw}`;
-
-  return ranges.map(([lo, hi], idx) => {
-    const bucket = ranked.filter(r => Number(r.gwRank) >= lo && Number(r.gwRank) <= hi);
-    if (bucket.length === 0) {
-      return { label: /** @type any */(labels[idx]), playerName: '', teamName: '', gwPoints: 0, gwRank: null, disabled: true };
-    }
-    const seed = seedBase;
-    const picked = seededPick(bucket, seed) || bucket[0];
-    return {
-      label: /** @type any */(labels[idx]),
-      playerName: String(picked.playerName || picked.displayName || ''),
-      teamName: String(picked.teamName || ''),
-      gwPoints: Number(picked.gwPoints ?? picked.latestGwPoints ?? 0),
-      gwRank: Number(picked.gwRank || null)
-    };
-  });
+  const b1 = ranked.filter(r => r.gwRank >= 1 && r.gwRank <= 15);
+  const b2 = ranked.filter(r => r.gwRank >= 16 && r.gwRank <= 25);
+  const b3 = ranked.filter(r => r.gwRank >= 26 && r.gwRank <= 51);
+  
+  return [
+    { label: 'Öl', pick: seededPick(b1, gw * 101 + 1) },
+    { label: 'Alkoholfri', pick: seededPick(b2, gw * 101 + 2) },
+    { label: 'Ingen öl', pick: seededPick(b3, gw * 101 + 3) },
+  ].map(x => x.pick ? ({ label: x.label, ...x.pick }) : null);
 }
 
 // In-memory cache for season row fetches
@@ -385,31 +388,21 @@ export async function tallySeasonTopsAndBottoms(args) {
 }
 
 /**
- * Pick worst captain for current GW given optional captain points batch.
+ * Pick worst captain for current GW given optional captain points mapping.
  * @param {WeeklyAggregate[]} rows
- * @param {{ entryId:number, captainPoints:number }[]|null} captains
+ * @param {Map<number, number>|null} capt - Map<entryId, points>
  * @returns {{ playerName:string, teamName:string, captainPoints:number }|null}
  */
-export function pickWorstCaptain(rows, captains) {
-  if (!Array.isArray(rows) || !Array.isArray(captains)) return null;
-  // Join by entryId
-  const capMap = new Map(captains.map(c => [Number(c.entryId), Number(c.captainPoints)]));
-  const candidates = rows
-    .map(r => ({
-      entryId: Number(r?.entryId || 0),
-      playerName: String(r?.playerName || r?.displayName || ''),
-      teamName: String(r?.teamName || ''),
-      gwPoints: Number(r?.gwPoints ?? r?.latestGwPoints ?? 0),
-      captainPoints: capMap.has(Number(r?.entryId)) ? Number(capMap.get(Number(r?.entryId))) : null
-    }))
-    .filter(x => Number.isFinite(x.captainPoints));
-  if (candidates.length === 0) return null;
-  candidates.sort((a, b) => {
-    if (a.captainPoints !== b.captainPoints) return Number(a.captainPoints) - Number(b.captainPoints);
-    if (a.gwPoints !== b.gwPoints) return Number(a.gwPoints) - Number(b.gwPoints);
-    return String(a.playerName).localeCompare(String(b.playerName));
-  });
-  const w = candidates[0];
-  return { playerName: w.playerName, teamName: w.teamName, captainPoints: Number(w.captainPoints) };
+export function pickWorstCaptain(rows, capt) {
+  if (!capt || !capt.size) return null;
+  const joined = rows
+    .map(r => ({ ...r, captainPoints: capt.get(r.entryId) }))
+    .filter(r => Number.isFinite(r.captainPoints));
+  if (!joined.length) return null;
+  return joined.sort((a, b) =>
+    (a.captainPoints - b.captainPoints) ||
+    (a.gwPoints - b.gwPoints) ||
+    (a.playerName.localeCompare(b.playerName))
+  )[0];
 }
 
